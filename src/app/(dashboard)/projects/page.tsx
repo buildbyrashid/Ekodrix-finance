@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, Search, MoreHorizontal, FileText, Eye } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -12,7 +12,6 @@ import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
 import Image from 'next/image'
-import Link from 'next/link'
 import { createBrowserClient } from '@supabase/ssr'
 
 export default function ProjectsPage() {
@@ -35,10 +34,10 @@ export default function ProjectsPage() {
     const [projectsRes, clientsRes, payRes, expRes] = await Promise.all([
       supabase.from('projects').select('*, clients(name)').order('created_at', { ascending: false }),
       supabase.from('clients').select('id, name').order('name', { ascending: true }),
-      supabase.from('payments').select('*').order('payment_date', { ascending: false }),
-      supabase.from('expenses').select('*').not('project_id', 'is', null).order('expense_date', { ascending: false })
+      supabase.from('payments').select('project_id, amount'),
+      supabase.from('expenses').select('project_id, amount').not('project_id', 'is', null)
     ])
-    
+
     if (projectsRes.error) toast.error('Failed to load projects')
     if (clientsRes.error) toast.error('Failed to load clients')
 
@@ -51,15 +50,15 @@ export default function ProjectsPage() {
   const [search, setSearch] = useState('')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
 
-  const filteredProjects = projects.filter(p => 
-    p.name?.toLowerCase().includes(search.toLowerCase()) || 
+  const filteredProjects = projects.filter(p =>
+    p.name?.toLowerCase().includes(search.toLowerCase()) ||
     p.clients?.name?.toLowerCase().includes(search.toLowerCase())
   )
 
   const handleAddProject = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const formData = new FormData(e.currentTarget)
-    
+
     const newProject = {
       name: formData.get('name') as string,
       client_id: formData.get('client') as string,
@@ -99,7 +98,7 @@ export default function ProjectsPage() {
           <h1 className="text-3xl font-bold tracking-tight">Projects</h1>
           <p className="text-muted-foreground mt-1">Track ongoing work, project values, and payment statuses.</p>
         </div>
-        
+
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger render={<Button />}>
             <Plus className="mr-2 h-4 w-4" /> New Project
@@ -149,8 +148,8 @@ export default function ProjectsPage() {
 
       <div className="flex items-center space-x-2">
         <Search className="w-5 h-5 text-muted-foreground" />
-        <Input 
-          placeholder="Search projects or clients..." 
+        <Input
+          placeholder="Search projects or clients..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="max-w-sm"
@@ -211,13 +210,19 @@ export default function ProjectsPage() {
                     <TableCell className="text-right text-primary">₹{received.toLocaleString()}</TableCell>
                     <TableCell className="text-right text-destructive">₹{pending.toLocaleString()}</TableCell>
                     <TableCell>{getStatusBadge(project.status)}</TableCell>
-                    <TableCell className="text-right">
-                      <Link href={`/projects/${project.id}`} title="View Details">
-                        <Button variant="ghost" size="icon" className="cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors">
-                          <Eye className="h-4 w-4" />
-                          <span className="sr-only">View Details</span>
-                        </Button>
-                      </Link>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger render={<Button variant="ghost" className="h-8 w-8 p-0" />}>
+                          <span className="sr-only">Open menu</span>
+                          <MoreHorizontal className="h-4 w-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                          <DropdownMenuItem>View Details</DropdownMenuItem>
+                          <DropdownMenuItem>Record Payment</DropdownMenuItem>
+                          <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 )

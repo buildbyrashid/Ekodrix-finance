@@ -15,7 +15,8 @@ import {
   LogOut,
   Menu,
   Moon,
-  Sun
+  Sun,
+  UserPlus
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import Image from 'next/image'
@@ -27,6 +28,7 @@ import { useRouter } from 'next/navigation'
 const navItems = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Clients', href: '/clients', icon: Users },
+  { name: 'Employees', href: '/employees', icon: UserPlus },
   { name: 'Projects', href: '/projects', icon: FolderKanban },
   { name: 'Payments', href: '/payments', icon: CreditCard },
   { name: 'Expenses', href: '/expenses', icon: Receipt },

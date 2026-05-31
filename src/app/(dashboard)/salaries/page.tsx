@@ -16,7 +16,14 @@ import { createBrowserClient } from '@supabase/ssr'
 
 export default function SalariesPage() {
   const [salaries, setSalaries] = useState<any[]>([])
+  const [employeesList, setEmployeesList] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+
+  const [formEmail, setFormEmail] = useState('')
+  const [formRole, setFormRole] = useState('')
+  const [formAmount, setFormAmount] = useState('')
+  const [formEmployeeId, setFormEmployeeId] = useState('')
+  const [formEmployeeName, setFormEmployeeName] = useState('')
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -28,9 +35,14 @@ export default function SalariesPage() {
   }, [])
 
   const fetchData = async () => {
-    const { data, error } = await supabase.from('salaries').select('*').order('created_at', { ascending: false })
-    if (error) toast.error('Failed to load salaries')
-    setSalaries(data || [])
+    const { data: salariesData, error: salariesError } = await supabase.from('salaries').select('*').order('created_at', { ascending: false })
+    if (salariesError) toast.error('Failed to load salaries')
+    setSalaries(salariesData || [])
+
+    const { data: employeesData, error: employeesError } = await supabase.from('employees').select('*').order('name', { ascending: true })
+    if (employeesError) toast.error('Failed to load employees')
+    setEmployeesList(employeesData || [])
+
     setLoading(false)
   }
   const [search, setSearch] = useState('')
@@ -41,16 +53,31 @@ export default function SalariesPage() {
     s.role?.toLowerCase().includes(search.toLowerCase())
   )
 
+  const handleEmployeeChange = (empId: string) => {
+    const emp = employeesList.find((e: any) => e.id === empId)
+    if (emp) {
+      setFormEmployeeId(emp.id)
+      setFormEmployeeName(emp.name)
+      setFormEmail(emp.email || '')
+      setFormRole(emp.role || '')
+      setFormAmount(emp.salary ? emp.salary.toString() : '0')
+    }
+  }
+
   const handleAddSalary = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const formData = new FormData(e.currentTarget)
     
+    const statusInput = formData.get('status') as string
+    
     const newSalary = {
-      employee_name: formData.get('employee') as string,
+      employee_id: formEmployeeId || null,
+      employee_name: formEmployeeName || (formData.get('employee') as string),
+      employee_email: formData.get('employee_email') as string,
       role: formData.get('role') as string,
       amount: Number(formData.get('amount')),
       month_year: formData.get('month') + '-01',
-      status: formData.get('status') as string,
+      payment_status: 'Pending', // Always create as Pending first to allow API to process payment securely
       payment_date: formData.get('payment_date') as string || null,
     }
 
@@ -62,29 +89,61 @@ export default function SalariesPage() {
     if (error) {
       toast.error(error.message)
     } else if (data) {
-      setSalaries([data[0], ...salaries])
       setIsDialogOpen(false)
-      toast.success('Salary record added successfully')
+      
+      // If user selected Paid, process the payment immediately via our API
+      if (statusInput === 'Paid') {
+        toast.success('Record created. Processing payment receipt...')
+        await markAsPaid(data[0].id)
+      } else {
+        setSalaries([data[0], ...salaries])
+        toast.success('Salary record added successfully')
+      }
     }
   }
 
   const markAsPaid = async (id: string) => {
-    const paymentDate = new Date().toISOString().split('T')[0]
-    const { error } = await supabase
-      .from('salaries')
-      .update({ status: 'Paid', payment_date: paymentDate })
-      .eq('id', id)
+    const toastId = toast.loading('Processing payment and sending receipt...')
     
-    if (error) {
-      toast.error(error.message)
-    } else {
-      setSalaries(salaries.map(s => {
-        if (s.id === id) {
-          return { ...s, status: 'Paid', payment_date: paymentDate }
+    try {
+      const response = await fetch('/api/salaries/pay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ salaryId: id })
+      })
+      
+      const result = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to process payment')
+      }
+      
+      // Update local state by replacing or prepending
+      setSalaries(currentSalaries => {
+        const exists = currentSalaries.find(s => s.id === id)
+        const updatedRecord = { 
+          ...(exists || result.salary), 
+          payment_status: 'Paid', 
+          payment_date: result.salary.payment_date,
+          receipt_number: result.salary.receipt_number,
+          receipt_sent: result.emailSent
         }
-        return s
-      }))
-      toast.success('Salary marked as paid')
+        
+        if (exists) {
+          return currentSalaries.map(s => s.id === id ? updatedRecord : s)
+        } else {
+          return [updatedRecord, ...currentSalaries]
+        }
+      })
+      
+      if (result.emailSent) {
+        toast.success('Salary marked as paid and receipt emailed successfully.', { id: toastId })
+      } else {
+        toast.warning('Salary marked as paid but receipt email could not be delivered.', { id: toastId })
+      }
+      
+    } catch (error: any) {
+      toast.error(error.message || 'An error occurred', { id: toastId })
     }
   }
 
@@ -110,17 +169,34 @@ export default function SalariesPage() {
             <form onSubmit={handleAddSalary}>
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
-                  <Label htmlFor="employee">Employee Name</Label>
-                  <Input id="employee" name="employee" required placeholder="Alice Sharma" />
+                  <Label htmlFor="employee_select">Employee Name</Label>
+                  <Select name="employee_select" onValueChange={handleEmployeeChange} required>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select an employee..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {employeesList.map(emp => (
+                        <SelectItem key={emp.id} value={emp.id}>
+                          {emp.name} (ID: {emp.id.split('-')[0]})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {/* Hidden input to allow traditional form behavior if needed, though we rely on state in the handler */}
+                  <input type="hidden" name="employee" value={formEmployeeName} />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="employee_email">Employee Email</Label>
+                  <Input id="employee_email" name="employee_email" type="email" required placeholder="alice@example.com" value={formEmail} onChange={e => setFormEmail(e.target.value)} />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="role">Role</Label>
-                  <Input id="role" name="role" required placeholder="e.g. Frontend Engineer" />
+                  <Input id="role" name="role" required placeholder="e.g. Frontend Engineer" value={formRole} onChange={e => setFormRole(e.target.value)} />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="grid gap-2">
                     <Label htmlFor="amount">Amount (₹)</Label>
-                    <Input id="amount" name="amount" type="number" required placeholder="50000" />
+                    <Input id="amount" name="amount" type="number" required placeholder="50000" value={formAmount} onChange={e => setFormAmount(e.target.value)} />
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="month">Month</Label>
@@ -200,10 +276,13 @@ export default function SalariesPage() {
                   <TableCell className="text-muted-foreground">{salary.role}</TableCell>
                   <TableCell>
                     {new Date(salary.month_year).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                    {salary.receipt_number && (
+                      <div className="text-xs text-muted-foreground mt-1">{salary.receipt_number}</div>
+                    )}
                   </TableCell>
                   <TableCell className="text-right font-medium">₹{salary.amount.toLocaleString()}</TableCell>
                   <TableCell>
-                    {salary.status === 'Paid' ? (
+                    {salary.payment_status === 'Paid' ? (
                       <Badge variant="outline" className="text-primary border-primary bg-primary/10">
                         <CheckCircle2 className="mr-1 h-3 w-3" /> Paid
                       </Badge>
@@ -224,8 +303,13 @@ export default function SalariesPage() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                        {salary.status === 'Pending' && (
+                        {salary.payment_status === 'Pending' && (
                           <DropdownMenuItem onClick={() => markAsPaid(salary.id)}>Mark as Paid</DropdownMenuItem>
+                        )}
+                        {salary.payment_status === 'Paid' && (
+                          <DropdownMenuItem onClick={() => window.open(`/receipts/${salary.id}`, '_blank')}>
+                            Download Receipt
+                          </DropdownMenuItem>
                         )}
                         <DropdownMenuItem>Edit Record</DropdownMenuItem>
                         <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
