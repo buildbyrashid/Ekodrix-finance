@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, Search, MoreHorizontal, UserCircle, CheckCircle2, Clock } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, UserCircle, CheckCircle2, Clock, Banknote, Calendar } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
@@ -46,14 +47,19 @@ export default function SalariesPage() {
     setLoading(false)
   }
   const [search, setSearch] = useState('')
+  const [filterMonth, setFilterMonth] = useState('all')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
 
+  const uniqueMonths = Array.from(new Set(salaries.map(s => s.month_year?.slice(0, 7)))).filter(Boolean).sort().reverse() as string[]
+
   const filteredSalaries = salaries.filter(s => 
-    s.employee_name?.toLowerCase().includes(search.toLowerCase()) || 
-    s.role?.toLowerCase().includes(search.toLowerCase())
+    (s.employee_name?.toLowerCase().includes(search.toLowerCase()) || 
+    s.role?.toLowerCase().includes(search.toLowerCase())) &&
+    (filterMonth === 'all' || s.month_year?.startsWith(filterMonth))
   )
 
-  const handleEmployeeChange = (empId: string) => {
+  const handleEmployeeChange = (empId: string | null) => {
+    if (!empId) return;
     const emp = employeesList.find((e: any) => e.id === empId)
     if (emp) {
       setFormEmployeeId(emp.id)
@@ -63,6 +69,18 @@ export default function SalariesPage() {
       setFormAmount(emp.salary ? emp.salary.toString() : '0')
     }
   }
+
+  const totalSpentAllTime = salaries
+    .filter(s => s.payment_status === 'Paid')
+    .reduce((sum, s) => sum + Number(s.amount), 0)
+
+  const filteredSpent = filteredSalaries
+    .filter(s => s.payment_status === 'Paid')
+    .reduce((sum, s) => sum + Number(s.amount), 0)
+
+  const filteredPending = filteredSalaries
+    .filter(s => s.payment_status === 'Pending')
+    .reduce((sum, s) => sum + Number(s.amount), 0)
 
   const handleAddSalary = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -228,14 +246,64 @@ export default function SalariesPage() {
         </Dialog>
       </div>
 
-      <div className="flex items-center space-x-2">
-        <Search className="w-5 h-5 text-muted-foreground" />
-        <Input 
-          placeholder="Search employees or roles..." 
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="max-w-sm"
-        />
+      {!loading && (
+        <div className="grid gap-4 md:grid-cols-3">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Total Spent</CardTitle>
+              <Banknote className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-primary">₹{totalSpentAllTime.toLocaleString()}</div>
+              <p className="text-xs text-muted-foreground mt-1">All time paid salaries</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">{filterMonth === 'all' ? 'Filtered Spent' : 'Month Spent'}</CardTitle>
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">₹{filteredSpent.toLocaleString()}</div>
+              <p className="text-xs text-muted-foreground mt-1">Paid in current view</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Pending</CardTitle>
+              <Clock className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-destructive">₹{filteredPending.toLocaleString()}</div>
+              <p className="text-xs text-muted-foreground mt-1">Unpaid in current view</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-2">
+        <div className="flex items-center space-x-2 w-full sm:w-auto flex-1 max-w-sm">
+          <Search className="w-5 h-5 text-muted-foreground" />
+          <Input 
+            placeholder="Search employees or roles..." 
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full"
+          />
+        </div>
+        <Select value={filterMonth} onValueChange={(val) => val && setFilterMonth(val)}>
+          <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectValue placeholder="Filter by Month" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Months</SelectItem>
+            {uniqueMonths.map(month => (
+              <SelectItem key={month} value={month}>
+                {new Date(month + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {loading ? (
