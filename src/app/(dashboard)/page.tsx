@@ -64,12 +64,7 @@ export default function DashboardPage() {
   const filteredExpenses = expenses.filter(e => e.expense_date && parseISO(e.expense_date).getTime() >= startDate.getTime())
   const filteredSalaries = salaries.filter(s => s.month_year && parseISO(s.month_year).getTime() >= startDate.getTime())
 
-  const totalGrossValue = filteredProjects.reduce((sum, p) => sum + Number(p.total_value), 0)
-  const filteredProjectExpenses = filteredProjects.reduce((sum, p) => {
-    const projExp = expenses.filter(e => e.project_id === p.id).reduce((s, e) => s + Number(e.amount), 0)
-    return sum + projExp
-  }, 0)
-  const totalValue = totalGrossValue - filteredProjectExpenses
+  const totalValue = filteredProjects.reduce((sum, p) => sum + Number(p.total_value), 0)
   
   const received = filteredPayments.reduce((sum, p) => sum + Number(p.amount), 0)
   
