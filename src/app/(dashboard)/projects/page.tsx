@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, Search, MoreHorizontal, FileText } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, FileText, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -50,12 +50,98 @@ export default function ProjectsPage() {
     setLoading(false)
   }
   const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>({
+    key: 'pending',
+    direction: 'desc',
+  })
 
-  const filteredProjects = projects.filter(p =>
-    p.name?.toLowerCase().includes(search.toLowerCase()) ||
-    p.clients?.name?.toLowerCase().includes(search.toLowerCase())
-  )
+  const handleSort = (key: string) => {
+    let direction: 'asc' | 'desc' = 'asc'
+    if (sortConfig && sortConfig.key === key) {
+      direction = sortConfig.direction === 'asc' ? 'desc' : 'asc'
+    } else {
+      if (['total_value', 'expensesTotal', 'netProfit', 'received', 'pending', 'created_at'].includes(key)) {
+        direction = 'desc'
+      }
+    }
+    setSortConfig({ key, direction })
+  }
+
+  const processedProjects = projects.map((project) => {
+    const projPayments = payments.filter(p => p.project_id === project.id)
+    const projExpenses = expenses.filter(e => e.project_id === project.id)
+    const received = projPayments.reduce((sum, p) => sum + Number(p.amount), 0)
+    const projectExpTotal = projExpenses.reduce((sum, e) => sum + Number(e.amount), 0)
+    const pending = Number(project.total_value) - received
+    const netProfit = Number(project.total_value) - projectExpTotal
+    return {
+      ...project,
+      received,
+      expensesTotal: projectExpTotal,
+      pending,
+      netProfit,
+    }
+  })
+
+  const filteredAndSortedProjects = processedProjects
+    .filter(p => {
+      const matchesSearch = p.name?.toLowerCase().includes(search.toLowerCase()) ||
+        p.clients?.name?.toLowerCase().includes(search.toLowerCase())
+      const matchesStatus = statusFilter === 'all' || p.status === statusFilter
+      return matchesSearch && matchesStatus
+    })
+    .sort((a, b) => {
+      if (!sortConfig) return 0
+      
+      let aVal: any = a[sortConfig.key]
+      let bVal: any = b[sortConfig.key]
+
+      if (sortConfig.key === 'client') {
+        aVal = a.clients?.name || ''
+        bVal = b.clients?.name || ''
+      }
+
+      if (aVal === undefined || aVal === null) return 1
+      if (bVal === undefined || bVal === null) return -1
+
+      if (typeof aVal === 'string') {
+        return sortConfig.direction === 'asc'
+          ? aVal.localeCompare(bVal)
+          : bVal.localeCompare(aVal)
+      } else {
+        return sortConfig.direction === 'asc'
+          ? aVal - bVal
+          : bVal - aVal
+      }
+    })
+
+  const renderSortHeader = (label: string, sortKey: string, className?: string) => {
+    const isSorted = sortConfig?.key === sortKey
+    const isNumeric = ['total_value', 'expensesTotal', 'netProfit', 'received', 'pending'].includes(sortKey)
+    return (
+      <TableHead
+        className={`${className || ''} cursor-pointer hover:bg-muted/50 transition-colors select-none group py-3`}
+        onClick={() => handleSort(sortKey)}
+      >
+        <div className={`flex items-center gap-1.5 ${isNumeric ? 'justify-end' : 'justify-start'}`}>
+          <span>{label}</span>
+          <span className="inline-flex">
+            {isSorted ? (
+              sortConfig?.direction === 'asc' ? (
+                <ArrowUp className="h-4 w-4 text-primary" />
+              ) : (
+                <ArrowDown className="h-4 w-4 text-primary" />
+              )
+            ) : (
+              <ArrowUpDown className="h-4 w-4 text-muted-foreground/30 opacity-0 group-hover:opacity-100 transition-opacity" />
+            )}
+          </span>
+        </div>
+      </TableHead>
+    )
+  }
 
   const handleAddProject = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -148,14 +234,29 @@ export default function ProjectsPage() {
         </Dialog>
       </div>
 
-      <div className="flex items-center space-x-2">
-        <Search className="w-5 h-5 text-muted-foreground" />
-        <Input
-          placeholder="Search projects or clients..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="max-w-sm"
-        />
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+        <div className="flex items-center space-x-2 w-full sm:max-w-sm">
+          <Search className="w-5 h-5 text-muted-foreground shrink-0" />
+          <Input
+            placeholder="Search projects or clients..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full"
+          />
+        </div>
+        <Select value={statusFilter} onValueChange={(val) => setStatusFilter(val || 'all')}>
+          <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectValue placeholder="All Statuses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Statuses</SelectItem>
+            <SelectItem value="Pending">Pending</SelectItem>
+            <SelectItem value="In Progress">In Progress</SelectItem>
+            <SelectItem value="Partial Payment">Partial</SelectItem>
+            <SelectItem value="Completed">Completed</SelectItem>
+            <SelectItem value="Fully Paid">Fully Paid</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {loading ? (
@@ -178,57 +279,71 @@ export default function ProjectsPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Project Name</TableHead>
-                <TableHead>Client</TableHead>
-                <TableHead className="text-right">Total Value</TableHead>
-                <TableHead className="text-right">Expenses</TableHead>
-                <TableHead className="text-right">Net Profit</TableHead>
-                <TableHead className="text-right">Received</TableHead>
-                <TableHead className="text-right">Pending</TableHead>
-                <TableHead>Status</TableHead>
+                {renderSortHeader('Project Name', 'name')}
+                {renderSortHeader('Client', 'client')}
+                {renderSortHeader('Created Date', 'created_at')}
+                {renderSortHeader('Total Value', 'total_value', 'text-right')}
+                {renderSortHeader('Expenses', 'expensesTotal', 'text-right')}
+                {renderSortHeader('Net Profit', 'netProfit', 'text-right')}
+                {renderSortHeader('Received', 'received', 'text-right')}
+                {renderSortHeader('Pending', 'pending', 'text-right')}
+                {renderSortHeader('Status', 'status')}
                 <TableHead className="w-[80px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredProjects.map((project) => {
-                const projPayments = payments.filter(p => p.project_id === project.id)
-                const projExpenses = expenses.filter(e => e.project_id === project.id)
-                const received = projPayments.reduce((sum, p) => sum + Number(p.amount), 0)
-                const projectExpTotal = projExpenses.reduce((sum, e) => sum + Number(e.amount), 0)
-                const pending = Number(project.total_value) - received
-                const netProfit = Number(project.total_value) - projectExpTotal
-                return (
-                  <TableRow key={project.id}>
-                    <TableCell className="font-medium">
-                      <div className="flex items-center gap-2">
-                        <FileText className="h-4 w-4 text-muted-foreground" />
-                        {project.name}
-                      </div>
-                    </TableCell>
-                    <TableCell>{project.clients?.name}</TableCell>
-                    <TableCell className="text-right font-medium">₹{Number(project.total_value).toLocaleString()}</TableCell>
-                    <TableCell className="text-right text-destructive">₹{projectExpTotal.toLocaleString()}</TableCell>
-                    <TableCell className="text-right font-bold text-primary">₹{netProfit.toLocaleString()}</TableCell>
-                    <TableCell className="text-right text-primary">₹{received.toLocaleString()}</TableCell>
-                    <TableCell className="text-right text-destructive">₹{pending.toLocaleString()}</TableCell>
-                    <TableCell>{getStatusBadge(project.status)}</TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger render={<Button variant="ghost" className="h-8 w-8 p-0" />}>
-                          <span className="sr-only">Open menu</span>
-                          <MoreHorizontal className="h-4 w-4" />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                          <DropdownMenuItem onClick={() => router.push(`/projects/${project.id}`)}>View Details</DropdownMenuItem>
-                          <DropdownMenuItem>Record Payment</DropdownMenuItem>
-                          <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
+              {filteredAndSortedProjects.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={10} className="h-24 text-center text-muted-foreground">
+                    No projects match your search or filter.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredAndSortedProjects.map((project) => {
+                  const received = project.received
+                  const projectExpTotal = project.expensesTotal
+                  const pending = project.pending
+                  const netProfit = project.netProfit
+                  return (
+                    <TableRow key={project.id}>
+                      <TableCell className="font-medium">
+                        <div className="flex items-center gap-2">
+                          <FileText className="h-4 w-4 text-muted-foreground" />
+                          {project.name}
+                        </div>
+                      </TableCell>
+                      <TableCell>{project.clients?.name}</TableCell>
+                      <TableCell className="text-muted-foreground whitespace-nowrap">
+                        {new Date(project.created_at).toLocaleDateString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric'
+                        })}
+                      </TableCell>
+                      <TableCell className="text-right font-medium">₹{Number(project.total_value).toLocaleString()}</TableCell>
+                      <TableCell className="text-right text-destructive">₹{projectExpTotal.toLocaleString()}</TableCell>
+                      <TableCell className="text-right font-bold text-primary">₹{netProfit.toLocaleString()}</TableCell>
+                      <TableCell className="text-right text-primary">₹{received.toLocaleString()}</TableCell>
+                      <TableCell className="text-right text-destructive">₹{pending.toLocaleString()}</TableCell>
+                      <TableCell>{getStatusBadge(project.status)}</TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger render={<Button variant="ghost" className="h-8 w-8 p-0" />}>
+                            <span className="sr-only">Open menu</span>
+                            <MoreHorizontal className="h-4 w-4" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                            <DropdownMenuItem onClick={() => router.push(`/projects/${project.id}`)}>View Details</DropdownMenuItem>
+                            <DropdownMenuItem>Record Payment</DropdownMenuItem>
+                            <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
+              )}
             </TableBody>
           </Table>
         </div>
