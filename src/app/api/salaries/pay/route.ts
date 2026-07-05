@@ -36,7 +36,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Salary ID is required' }, { status: 400 })
     }
 
-    console.log('[API] Received request to process salary. salaryId:', salaryId, 'resend:', resend)
+    console.log('[API] Processing salary payment and receipt. salaryId:', salaryId, 'resend:', resend)
 
     // 1. Fetch the salary record
     const { data: salary, error: fetchError } = await supabase
