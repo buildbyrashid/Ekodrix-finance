@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, Search, MoreHorizontal, UserCircle, CheckCircle2, Clock, Banknote, Calendar } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, UserCircle, CheckCircle2, Clock, Banknote, Calendar, Mail } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -22,9 +22,25 @@ export default function SalariesPage() {
 
   const [formEmail, setFormEmail] = useState('')
   const [formRole, setFormRole] = useState('')
-  const [formAmount, setFormAmount] = useState('')
+  const [formAmount, setFormAmount] = useState('10000')
   const [formEmployeeId, setFormEmployeeId] = useState('')
   const [formEmployeeName, setFormEmployeeName] = useState('')
+
+  // Modal employee selection states
+  const [employeeSearch, setEmployeeSearch] = useState('')
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
+  const [formMonth, setFormMonth] = useState(() => {
+    const d = new Date()
+    d.setMonth(d.getMonth() - 1)
+    return d.toISOString().slice(0, 7)
+  })
+  const [bypassMonthFilter, setBypassMonthFilter] = useState(false)
+
+  // Filtering states
+  const [filterType, setFilterType] = useState<'month' | 'range' | 'all'>('month')
+  const [filterMonth, setFilterMonth] = useState('')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -38,25 +54,54 @@ export default function SalariesPage() {
   const fetchData = async () => {
     const { data: salariesData, error: salariesError } = await supabase.from('salaries').select('*').order('created_at', { ascending: false })
     if (salariesError) toast.error('Failed to load salaries')
-    setSalaries(salariesData || [])
+    const loadedSalaries = salariesData || []
+    setSalaries(loadedSalaries)
 
     const { data: employeesData, error: employeesError } = await supabase.from('employees').select('*').order('name', { ascending: true })
     if (employeesError) toast.error('Failed to load employees')
     setEmployeesList(employeesData || [])
 
+    // Set default month filter dynamically to the month of the last paid/recorded salary
+    if (loadedSalaries.length > 0) {
+      const latestPaid = loadedSalaries.find(s => s.payment_status === 'Paid') || loadedSalaries[0]
+      if (latestPaid && latestPaid.month_year) {
+        setFilterMonth(latestPaid.month_year.slice(0, 7))
+      }
+    } else {
+      const d = new Date()
+      d.setMonth(d.getMonth() - 1)
+      setFilterMonth(d.toISOString().slice(0, 7))
+    }
+
     setLoading(false)
   }
   const [search, setSearch] = useState('')
-  const [filterMonth, setFilterMonth] = useState('all')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
 
   const uniqueMonths = Array.from(new Set(salaries.map(s => s.month_year?.slice(0, 7)))).filter(Boolean).sort().reverse() as string[]
 
-  const filteredSalaries = salaries.filter(s => 
-    (s.employee_name?.toLowerCase().includes(search.toLowerCase()) || 
-    s.role?.toLowerCase().includes(search.toLowerCase())) &&
-    (filterMonth === 'all' || s.month_year?.startsWith(filterMonth))
-  )
+  const filteredSalaries = salaries.filter(s => {
+    // Search filter
+    const matchesSearch = (
+      s.employee_name?.toLowerCase().includes(search.toLowerCase()) || 
+      s.role?.toLowerCase().includes(search.toLowerCase())
+    )
+    if (!matchesSearch) return false
+
+    // Date/Month filters
+    if (filterType === 'month') {
+      return filterMonth === 'all' || s.month_year?.startsWith(filterMonth)
+    } else if (filterType === 'range') {
+      const paymentDate = s.payment_date || s.created_at?.slice(0, 10)
+      if (!paymentDate) return false
+      if (startDate && paymentDate < startDate) return false
+      if (endDate && paymentDate > endDate) return false
+      return true
+    }
+    
+    // 'all' type (All Time)
+    return true
+  })
 
   const handleEmployeeChange = (empId: string | null) => {
     if (!empId) return;
@@ -66,9 +111,22 @@ export default function SalariesPage() {
       setFormEmployeeName(emp.name)
       setFormEmail(emp.email || '')
       setFormRole(emp.role || '')
-      setFormAmount(emp.salary ? emp.salary.toString() : '0')
+      setFormAmount(emp.salary && Number(emp.salary) > 0 ? emp.salary.toString() : '10000')
     }
   }
+
+  // Filter employees for the Add Salary form dropdown
+  const filteredEmployeesForForm = employeesList.filter(emp => {
+    if (employeeSearch && !emp.name.toLowerCase().includes(employeeSearch.toLowerCase())) {
+      return false
+    }
+    
+    if (bypassMonthFilter || !formMonth) return true
+    
+    const targetMonthYear = `${formMonth}-01`
+    const hasRecord = salaries.some(s => s.employee_id === emp.id && s.month_year === targetMonthYear)
+    return !hasRecord
+  })
 
   const totalSpentAllTime = salaries
     .filter(s => s.payment_status === 'Paid')
@@ -78,9 +136,36 @@ export default function SalariesPage() {
     .filter(s => s.payment_status === 'Paid')
     .reduce((sum, s) => sum + Number(s.amount), 0)
 
-  const filteredPending = filteredSalaries
-    .filter(s => s.payment_status === 'Pending')
-    .reduce((sum, s) => sum + Number(s.amount), 0)
+  // Calculate last payment date
+  const latestPayment = salaries
+    .filter(s => s.payment_status === 'Paid' && s.payment_date)
+    .sort((a, b) => new Date(b.payment_date).getTime() - new Date(a.payment_date).getTime())[0]
+
+  const lastPaymentDate = latestPayment 
+    ? new Date(latestPayment.payment_date).toLocaleDateString('en-US', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric'
+      }) 
+    : '-'
+
+  let card1Title = "All-Time Spent"
+  let card1Desc = "Total paid payroll history"
+
+  let card2Title = "Current Spent"
+  let card2Desc = "Paid in selected view"
+
+  if (filterType === 'month' && filterMonth && filterMonth !== 'all') {
+    const formattedMonth = new Date(filterMonth + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    card2Title = `${formattedMonth} Spent`
+    card2Desc = `Paid salaries for ${formattedMonth}`
+  } else if (filterType === 'range') {
+    card2Title = "Range Spent"
+    card2Desc = "Paid salaries in date range"
+  } else {
+    card2Title = "Total Paid"
+    card2Desc = "Paid salaries overall"
+  }
 
   const handleAddSalary = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -108,6 +193,14 @@ export default function SalariesPage() {
       toast.error(error.message)
     } else if (data) {
       setIsDialogOpen(false)
+      
+      // Reset form search/selection states
+      setEmployeeSearch('')
+      setFormEmployeeId('')
+      setFormEmployeeName('')
+      setFormEmail('')
+      setFormRole('')
+      setFormAmount('10000')
       
       // If user selected Paid, process the payment immediately via our API
       if (statusInput === 'Paid') {
@@ -165,6 +258,43 @@ export default function SalariesPage() {
     }
   }
 
+  const handleSendReceipt = async (id: string) => {
+    const toastId = toast.loading('Sending receipt...')
+    
+    try {
+      const response = await fetch('/api/salaries/pay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ salaryId: id, resend: true })
+      })
+      
+      const result = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to send receipt')
+      }
+      
+      // Update local state by replacing the receipt status and details
+      setSalaries(currentSalaries => 
+        currentSalaries.map(s => s.id === id ? { 
+          ...s, 
+          receipt_sent: result.emailSent,
+          receipt_sent_at: result.emailSent ? new Date().toISOString() : s.receipt_sent_at,
+          receipt_number: result.salary.receipt_number || s.receipt_number
+        } : s)
+      )
+      
+      if (result.emailSent) {
+        toast.success('Receipt sent successfully.', { id: toastId })
+      } else {
+        toast.error(result.emailError ? `Failed to send email: ${result.emailError}` : 'Failed to send email.', { id: toastId })
+      }
+      
+    } catch (error: any) {
+      toast.error(error.message || 'An error occurred', { id: toastId })
+    }
+  }
+
   return (
     <div className="p-4 md:p-8 space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -186,20 +316,65 @@ export default function SalariesPage() {
             </DialogHeader>
             <form onSubmit={handleAddSalary}>
               <div className="grid gap-4 py-4">
-                <div className="grid gap-2">
+                <div className="grid gap-2 relative">
                   <Label htmlFor="employee_select">Employee Name</Label>
-                  <Select name="employee_select" onValueChange={handleEmployeeChange} required>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select an employee..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {employeesList.map(emp => (
-                        <SelectItem key={emp.id} value={emp.id}>
-                          {emp.name} (ID: {emp.id.split('-')[0]})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                    >
+                      <span>{formEmployeeName || "Select an employee..."}</span>
+                      <span className="text-muted-foreground text-xs">▼</span>
+                    </button>
+                    
+                    {isDropdownOpen && (
+                      <div className="absolute top-11 left-0 z-50 w-full rounded-md border bg-popover text-popover-foreground shadow-md outline-none animate-in fade-in-0 zoom-in-95 p-1 max-h-[220px] overflow-hidden flex flex-col">
+                        <Input
+                          placeholder="Search employee..."
+                          value={employeeSearch}
+                          onChange={(e) => setEmployeeSearch(e.target.value)}
+                          className="mb-1 h-8 focus-visible:ring-0 focus-visible:ring-offset-0"
+                          autoFocus
+                        />
+                        <div className="overflow-y-auto flex-1 space-y-0.5">
+                          {filteredEmployeesForForm.length === 0 ? (
+                            <div className="py-2 text-center text-xs text-muted-foreground">No employees found.</div>
+                          ) : (
+                            filteredEmployeesForForm.map(emp => (
+                              <button
+                                key={emp.id}
+                                type="button"
+                                className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-accent hover:text-accent-foreground flex flex-col"
+                                onClick={() => {
+                                  handleEmployeeChange(emp.id)
+                                  setIsDropdownOpen(false)
+                                  setEmployeeSearch('')
+                                }}
+                              >
+                                <span className="font-semibold">{emp.name}</span>
+                                <span className="text-[10px] text-muted-foreground">{emp.role || "No Role"}</span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Bypass checkbox */}
+                  <div className="flex items-center space-x-2 mt-0.5">
+                    <input 
+                      type="checkbox" 
+                      id="bypass_filter" 
+                      checked={bypassMonthFilter} 
+                      onChange={(e) => setBypassMonthFilter(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-gray-300 text-primary focus:ring-primary cursor-pointer"
+                    />
+                    <Label htmlFor="bypass_filter" className="text-[11px] text-muted-foreground cursor-pointer select-none">
+                      Show employees already paid/recorded for this month
+                    </Label>
+                  </div>
                   {/* Hidden input to allow traditional form behavior if needed, though we rely on state in the handler */}
                   <input type="hidden" name="employee" value={formEmployeeName} />
                 </div>
@@ -218,7 +393,7 @@ export default function SalariesPage() {
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="month">Month</Label>
-                    <Input id="month" name="month" type="month" required />
+                    <Input id="month" name="month" type="month" required value={formMonth} onChange={e => setFormMonth(e.target.value)} />
                   </div>
                 </div>
                 <div className="grid gap-2">
@@ -250,38 +425,38 @@ export default function SalariesPage() {
         <div className="grid gap-4 md:grid-cols-3">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Total Spent</CardTitle>
+              <CardTitle className="text-sm font-medium">{card2Title}</CardTitle>
               <Banknote className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-primary">₹{totalSpentAllTime.toLocaleString()}</div>
-              <p className="text-xs text-muted-foreground mt-1">All time paid salaries</p>
+              <div className="text-2xl font-bold text-primary">₹{filteredSpent.toLocaleString()}</div>
+              <p className="text-xs text-muted-foreground mt-1">{card2Desc}</p>
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">{filterMonth === 'all' ? 'Filtered Spent' : 'Month Spent'}</CardTitle>
+              <CardTitle className="text-sm font-medium">{card1Title}</CardTitle>
               <Calendar className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">₹{filteredSpent.toLocaleString()}</div>
-              <p className="text-xs text-muted-foreground mt-1">Paid in current view</p>
+              <div className="text-2xl font-bold">₹{totalSpentAllTime.toLocaleString()}</div>
+              <p className="text-xs text-muted-foreground mt-1">{card1Desc}</p>
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Pending</CardTitle>
+              <CardTitle className="text-sm font-medium">Last Paid On</CardTitle>
               <Clock className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-destructive">₹{filteredPending.toLocaleString()}</div>
-              <p className="text-xs text-muted-foreground mt-1">Unpaid in current view</p>
+              <div className="text-2xl font-bold text-emerald-600">{lastPaymentDate}</div>
+              <p className="text-xs text-muted-foreground mt-1">Latest salary payment date</p>
             </CardContent>
           </Card>
         </div>
       )}
 
-      <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-2">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 w-full">
         <div className="flex items-center space-x-2 w-full sm:w-auto flex-1 max-w-sm">
           <Search className="w-5 h-5 text-muted-foreground" />
           <Input 
@@ -291,19 +466,54 @@ export default function SalariesPage() {
             className="w-full"
           />
         </div>
-        <Select value={filterMonth} onValueChange={(val) => val && setFilterMonth(val)}>
-          <SelectTrigger className="w-full sm:w-[180px]">
-            <SelectValue placeholder="Filter by Month" />
+        
+        {/* Filter Type Toggle */}
+        <Select value={filterType} onValueChange={(val: any) => setFilterType(val)}>
+          <SelectTrigger className="w-full sm:w-[140px]">
+            <SelectValue placeholder="Filter Type" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Months</SelectItem>
-            {uniqueMonths.map(month => (
-              <SelectItem key={month} value={month}>
-                {new Date(month + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-              </SelectItem>
-            ))}
+            <SelectItem value="month">Month Wise</SelectItem>
+            <SelectItem value="range">Date Range</SelectItem>
+            <SelectItem value="all">All Time</SelectItem>
           </SelectContent>
         </Select>
+
+        {/* Dynamic Month Filter */}
+        {filterType === 'month' && (
+          <Select value={filterMonth} onValueChange={(val) => val && setFilterMonth(val)}>
+            <SelectTrigger className="w-full sm:w-[180px]">
+              <SelectValue placeholder="Filter by Month" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Months</SelectItem>
+              {uniqueMonths.map(month => (
+                <SelectItem key={month} value={month}>
+                  {new Date(month + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {/* Dynamic Date Range Filter */}
+        {filterType === 'range' && (
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <Input 
+              type="date" 
+              value={startDate} 
+              onChange={(e) => setStartDate(e.target.value)} 
+              className="w-full sm:w-[140px]" 
+            />
+            <span className="text-muted-foreground text-sm">to</span>
+            <Input 
+              type="date" 
+              value={endDate} 
+              onChange={(e) => setEndDate(e.target.value)} 
+              className="w-full sm:w-[140px]" 
+            />
+          </div>
+        )}
       </div>
 
       {loading ? (
@@ -351,9 +561,32 @@ export default function SalariesPage() {
                   <TableCell className="text-right font-medium">₹{salary.amount.toLocaleString()}</TableCell>
                   <TableCell>
                     {salary.payment_status === 'Paid' ? (
-                      <Badge variant="outline" className="text-primary border-primary bg-primary/10">
-                        <CheckCircle2 className="mr-1 h-3 w-3" /> Paid
-                      </Badge>
+                      <div className="flex flex-col gap-1">
+                        <Badge variant="outline" className="w-fit text-primary border-primary bg-primary/10">
+                          <CheckCircle2 className="mr-1 h-3 w-3" /> Paid
+                        </Badge>
+                        {salary.receipt_sent ? (
+                          <span className="text-[10px] text-emerald-600 flex items-center gap-1 font-medium">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                            Receipt Sent
+                          </span>
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] text-destructive flex items-center gap-1 font-medium">
+                              <span className="w-1.5 h-1.5 rounded-full bg-destructive"></span>
+                              Failed / Not Sent
+                            </span>
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="h-5 px-1.5 text-[9px] text-primary hover:text-primary-foreground hover:bg-primary border-primary/20"
+                              onClick={() => handleSendReceipt(salary.id)}
+                            >
+                              <Mail className="mr-0.5 h-2.5 w-2.5" /> Send
+                            </Button>
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <Badge variant="secondary" className="bg-accent text-accent-foreground">
                         <Clock className="mr-1 h-3 w-3" /> Pending
@@ -375,9 +608,14 @@ export default function SalariesPage() {
                           <DropdownMenuItem onClick={() => markAsPaid(salary.id)}>Mark as Paid</DropdownMenuItem>
                         )}
                         {salary.payment_status === 'Paid' && (
-                          <DropdownMenuItem onClick={() => window.open(`/receipts/${salary.id}`, '_blank')}>
-                            Download Receipt
-                          </DropdownMenuItem>
+                          <>
+                            <DropdownMenuItem onClick={() => handleSendReceipt(salary.id)}>
+                              {salary.receipt_sent ? 'Resend Receipt' : 'Send Receipt'}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => window.open(`/receipts/${salary.id}`, '_blank')}>
+                              Download Receipt
+                            </DropdownMenuItem>
+                          </>
                         )}
                         <DropdownMenuItem>Edit Record</DropdownMenuItem>
                         <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
