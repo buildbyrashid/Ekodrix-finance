@@ -30,13 +30,13 @@ export async function POST(req: Request) {
       }
     )
 
-    const { salaryId } = await req.json()
+    const { salaryId, resend = false } = await req.json()
 
     if (!salaryId) {
       return NextResponse.json({ error: 'Salary ID is required' }, { status: 400 })
     }
 
-    console.log('[API] Received request to mark salary as paid. salaryId:', salaryId)
+    console.log('[API] Received request to process salary. salaryId:', salaryId, 'resend:', resend)
 
     // 1. Fetch the salary record
     const { data: salary, error: fetchError } = await supabase
@@ -51,51 +51,92 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Salary record not found', details: fetchError }, { status: 404 })
     }
 
-    if (salary.payment_status === 'Paid') {
+    if (salary.payment_status === 'Paid' && !resend) {
       return NextResponse.json({ error: 'Salary is already paid' }, { status: 400 })
     }
 
-    // 2. Generate Receipt Number
-    const currentYear = new Date().getFullYear()
-    
-    // We can count existing receipts for this year to generate a sequential number
-    const { count, error: countError } = await supabase
-      .from('salaries')
-      .select('*', { count: 'exact', head: true })
-      .not('receipt_number', 'is', null)
-      .gte('payment_date', `${currentYear}-01-01`)
-      .lte('payment_date', `${currentYear}-12-31`)
+    // 2. Determine/Generate Receipt Number and Payment Date
+    let receiptNumber = salary.receipt_number
+    let paymentDate = salary.payment_date
+    let updatedSalary = salary
 
-    if (countError) {
-      console.error('Error getting count:', countError)
-      return NextResponse.json({ error: 'Failed to generate receipt number' }, { status: 500 })
+    if (salary.payment_status === 'Paid') {
+      // If already paid, reuse or generate missing receipt number
+      if (!receiptNumber) {
+        const currentYear = new Date().getFullYear()
+        const { count, error: countError } = await supabase
+          .from('salaries')
+          .select('*', { count: 'exact', head: true })
+          .not('receipt_number', 'is', null)
+          .gte('payment_date', `${currentYear}-01-01`)
+          .lte('payment_date', `${currentYear}-12-31`)
+
+        if (countError) {
+          console.error('Error getting count:', countError)
+          return NextResponse.json({ error: 'Failed to generate receipt number' }, { status: 500 })
+        }
+
+        const nextNumber = (count || 0) + 1
+        receiptNumber = `EKO-SAL-${currentYear}-${nextNumber.toString().padStart(4, '0')}`
+        paymentDate = paymentDate || new Date().toISOString().split('T')[0]
+
+        const { data: dbUpdated, error: updateError } = await supabase
+          .from('salaries')
+          .update({ 
+            receipt_number: receiptNumber,
+            payment_date: paymentDate
+          })
+          .eq('id', salaryId)
+          .select()
+          .single()
+
+        if (updateError) {
+          return NextResponse.json({ error: 'Failed to update receipt number' }, { status: 500 })
+        }
+        updatedSalary = dbUpdated
+      }
+    } else {
+      // Mark as Paid and Generate Receipt Number
+      const currentYear = new Date().getFullYear()
+      const { count, error: countError } = await supabase
+        .from('salaries')
+        .select('*', { count: 'exact', head: true })
+        .not('receipt_number', 'is', null)
+        .gte('payment_date', `${currentYear}-01-01`)
+        .lte('payment_date', `${currentYear}-12-31`)
+
+      if (countError) {
+        console.error('Error getting count:', countError)
+        return NextResponse.json({ error: 'Failed to generate receipt number' }, { status: 500 })
+      }
+
+      const nextNumber = (count || 0) + 1
+      receiptNumber = `EKO-SAL-${currentYear}-${nextNumber.toString().padStart(4, '0')}`
+      paymentDate = new Date().toISOString().split('T')[0]
+
+      const { data: dbUpdated, error: updateError } = await supabase
+        .from('salaries')
+        .update({ 
+          payment_status: 'Paid', 
+          payment_date: paymentDate,
+          receipt_number: receiptNumber
+        })
+        .eq('id', salaryId)
+        .select()
+        .single()
+
+      if (updateError) {
+        return NextResponse.json({ error: 'Failed to update salary status' }, { status: 500 })
+      }
+      updatedSalary = dbUpdated
     }
 
-    const nextNumber = (count || 0) + 1
-    const receiptNumber = `EKO-SAL-${currentYear}-${nextNumber.toString().padStart(4, '0')}`
-    const paymentDate = new Date().toISOString().split('T')[0]
     const paymentDateObj = new Date(paymentDate)
     const formattedPaymentDate = paymentDateObj.toLocaleDateString('en-GB', {
       day: 'numeric',
       month: 'long',
       year: 'numeric'
     })
-
-    // 3. Mark as Paid and Save Receipt Number
-    const { data: updatedSalary, error: updateError } = await supabase
-      .from('salaries')
-      .update({ 
-        payment_status: 'Paid', 
-        payment_date: paymentDate,
-        receipt_number: receiptNumber
-      })
-      .eq('id', salaryId)
-      .select()
-      .single()
-
-    if (updateError) {
-      return NextResponse.json({ error: 'Failed to update salary status' }, { status: 500 })
-    }
 
     // 4. Send Email if employee email is provided
     let emailSent = false
@@ -194,13 +235,18 @@ export async function POST(req: Request) {
 
     // 5. Update Email Status in DB
     if (emailSent) {
-      await supabase
+      const { data: finalSalary } = await supabase
         .from('salaries')
         .update({ 
           receipt_sent: true, 
           receipt_sent_at: new Date().toISOString() 
         })
         .eq('id', salaryId)
+        .select()
+        .single()
+      if (finalSalary) {
+        updatedSalary = finalSalary
+      }
     }
 
     return NextResponse.json({ 

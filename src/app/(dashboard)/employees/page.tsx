@@ -131,7 +131,7 @@ export default function EmployeesPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Employees</h1>
-          <p className="text-muted-foreground mt-1">Manage team members and their default salary information.</p>
+          <p className="text-muted-foreground mt-1">Manage team members and their base salary information.</p>
         </div>
         
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -160,8 +160,8 @@ export default function EmployeesPage() {
                   <Input id="role" name="role" required placeholder="e.g. Frontend Engineer" />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="salary">Default Salary (₹)</Label>
-                  <Input id="salary" name="salary" type="number" defaultValue="0" required placeholder="50000" />
+                  <Label htmlFor="salary">Base Salary (₹)</Label>
+                  <Input id="salary" name="salary" type="number" defaultValue="10000" required placeholder="10000" />
                 </div>
               </div>
               <DialogFooter>
@@ -196,7 +196,7 @@ export default function EmployeesPage() {
                     <Input id="edit-role" name="role" defaultValue={currentEmployee.role} required />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="edit-salary">Default Salary (₹)</Label>
+                    <Label htmlFor="edit-salary">Base Salary (₹)</Label>
                     <Input id="edit-salary" name="salary" type="number" defaultValue={currentEmployee.salary} required />
                   </div>
                 </div>
@@ -226,7 +226,7 @@ export default function EmployeesPage() {
               <TableHead>Employee</TableHead>
               <TableHead>Role</TableHead>
               <TableHead className="hidden md:table-cell">Email</TableHead>
-              <TableHead className="text-right">Default Salary</TableHead>
+              <TableHead className="text-right">Base Salary</TableHead>
               <TableHead className="w-[80px]"></TableHead>
             </TableRow>
           </TableHeader>
