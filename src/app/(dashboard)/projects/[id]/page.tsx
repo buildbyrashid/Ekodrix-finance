@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Plus, Banknote, Wallet, Receipt, CreditCard, FolderKanban, Loader2, IndianRupee } from 'lucide-react'
+import { ArrowLeft, Plus, Banknote, Wallet, Receipt, CreditCard, FolderKanban, Loader2, IndianRupee, Trash2, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -27,6 +27,45 @@ export default function ProjectDetailsPage() {
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false)
   const [isExpenseDialogOpen, setIsExpenseDialogOpen] = useState(false)
   const [expenseCategory, setExpenseCategory] = useState("Project")
+
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  const handleConfirmDelete = async () => {
+    if (!project) return
+    setIsDeleting(true)
+    try {
+      // 1. Delete associated payments
+      const { error: payErr } = await supabase
+        .from('payments')
+        .delete()
+        .eq('project_id', id)
+
+      if (payErr) throw payErr
+
+      // 2. Delete associated expenses
+      const { error: expErr } = await supabase
+        .from('expenses')
+        .delete()
+        .eq('project_id', id)
+
+      if (expErr) throw expErr
+
+      // 3. Delete the project
+      const { error: projErr } = await supabase
+        .from('projects')
+        .delete()
+        .eq('id', id)
+
+      if (projErr) throw projErr
+
+      toast.success(`Project "${project.name}" and connected transactions deleted successfully`)
+      router.push('/projects')
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete project')
+      setIsDeleting(false)
+    }
+  }
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -158,6 +197,16 @@ export default function ProjectDetailsPage() {
               </>
             )}
           </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button
+            variant="destructive"
+            className="cursor-pointer"
+            onClick={() => setIsDeleteDialogOpen(true)}
+          >
+            <Trash2 className="mr-2 h-4 w-4" /> Delete Project
+          </Button>
         </div>
       </div>
 
@@ -412,6 +461,59 @@ export default function ProjectDetailsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Delete Project Confirmation Modal */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={(open) => {
+        if (!isDeleting) setIsDeleteDialogOpen(open)
+      }}>
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle className="text-destructive flex items-center gap-2 text-xl">
+              <AlertTriangle className="h-5 w-5" />
+              Delete Project
+            </DialogTitle>
+            <DialogDescription className="pt-2 text-foreground/80">
+              Are you sure you want to delete <strong className="text-foreground font-semibold">"{project?.name}"</strong>?
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-3 px-4 rounded-lg bg-destructive/10 border border-destructive/20 text-sm space-y-2">
+            <p className="font-medium text-destructive">This action will permanently delete:</p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-muted-foreground pl-1">
+              <li>The project record and details</li>
+              <li>All linked payments (Received: <span className="font-semibold text-foreground">₹{totalReceived.toLocaleString()}</span>)</li>
+              <li>All associated project expenses (Expenses: <span className="font-semibold text-foreground">₹{totalExpenses.toLocaleString()}</span>)</li>
+            </ul>
+            <p className="text-xs text-muted-foreground pt-1">
+              All financial dashboards and transaction history will automatically update. This action cannot be undone.
+            </p>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setIsDeleteDialogOpen(false)}
+              disabled={isDeleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDelete}
+              disabled={isDeleting}
+            >
+              {isDeleting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Deleting Project...
+                </>
+              ) : (
+                'Delete Project'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

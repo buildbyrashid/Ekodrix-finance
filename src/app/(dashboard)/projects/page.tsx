@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, Search, MoreHorizontal, FileText, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, FileText, ArrowUpDown, ArrowUp, ArrowDown, Trash2, Loader2, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -52,6 +52,52 @@ export default function ProjectsPage() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [projectToDelete, setProjectToDelete] = useState<any | null>(null)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  const handleConfirmDelete = async () => {
+    if (!projectToDelete) return
+    setIsDeleting(true)
+    try {
+      // 1. Delete associated payments
+      const { error: payErr } = await supabase
+        .from('payments')
+        .delete()
+        .eq('project_id', projectToDelete.id)
+
+      if (payErr) throw payErr
+
+      // 2. Delete associated expenses
+      const { error: expErr } = await supabase
+        .from('expenses')
+        .delete()
+        .eq('project_id', projectToDelete.id)
+
+      if (expErr) throw expErr
+
+      // 3. Delete the project
+      const { error: projErr } = await supabase
+        .from('projects')
+        .delete()
+        .eq('id', projectToDelete.id)
+
+      if (projErr) throw projErr
+
+      setProjects(prev => prev.filter(p => p.id !== projectToDelete.id))
+      setPayments(prev => prev.filter(p => p.project_id !== projectToDelete.id))
+      setExpenses(prev => prev.filter(e => e.project_id !== projectToDelete.id))
+
+      toast.success(`Project "${projectToDelete.name}" and connected transactions deleted successfully`)
+      setIsDeleteDialogOpen(false)
+      setProjectToDelete(null)
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete project')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>({
     key: 'pending',
     direction: 'desc',
@@ -335,8 +381,17 @@ export default function ProjectsPage() {
                           <DropdownMenuContent align="end">
                             <DropdownMenuLabel>Actions</DropdownMenuLabel>
                             <DropdownMenuItem onClick={() => router.push(`/projects/${project.id}`)}>View Details</DropdownMenuItem>
-                            <DropdownMenuItem>Record Payment</DropdownMenuItem>
-                            <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => router.push(`/projects/${project.id}`)}>Record Payment</DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive cursor-pointer"
+                              onClick={() => {
+                                setProjectToDelete(project)
+                                setIsDeleteDialogOpen(true)
+                              }}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete Project
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -348,6 +403,65 @@ export default function ProjectsPage() {
           </Table>
         </div>
       )}
+
+      {/* Delete Project Confirmation Modal */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={(open) => {
+        if (!isDeleting) {
+          setIsDeleteDialogOpen(open)
+          if (!open) setProjectToDelete(null)
+        }
+      }}>
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle className="text-destructive flex items-center gap-2 text-xl">
+              <AlertTriangle className="h-5 w-5" />
+              Delete Project
+            </DialogTitle>
+            <DialogDescription className="pt-2 text-foreground/80">
+              Are you sure you want to delete <strong className="text-foreground font-semibold">"{projectToDelete?.name}"</strong>?
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-3 px-4 rounded-lg bg-destructive/10 border border-destructive/20 text-sm space-y-2">
+            <p className="font-medium text-destructive">This action will permanently delete:</p>
+            <ul className="list-disc list-inside space-y-1 text-xs text-muted-foreground pl-1">
+              <li>The project profile and details</li>
+              <li>All linked payment history (Received: <span className="font-semibold text-foreground">₹{projectToDelete?.received?.toLocaleString() || 0}</span>)</li>
+              <li>All associated project expenses (Expenses: <span className="font-semibold text-foreground">₹{projectToDelete?.expensesTotal?.toLocaleString() || 0}</span>)</li>
+            </ul>
+            <p className="text-xs text-muted-foreground pt-1">
+              All financial dashboards, overview totals, and transaction records will automatically update. This action cannot be undone.
+            </p>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsDeleteDialogOpen(false)
+                setProjectToDelete(null)
+              }}
+              disabled={isDeleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDelete}
+              disabled={isDeleting}
+            >
+              {isDeleting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Deleting Project...
+                </>
+              ) : (
+                'Delete Project'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
