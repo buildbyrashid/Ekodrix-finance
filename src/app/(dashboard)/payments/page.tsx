@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, Search, MoreHorizontal, ArrowDownRight } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, ArrowDownRight, Trash2, Loader2, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -44,6 +44,31 @@ export default function PaymentsPage() {
   }
   const [search, setSearch] = useState('')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [paymentToDelete, setPaymentToDelete] = useState<any | null>(null)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  const handleConfirmDeletePayment = async () => {
+    if (!paymentToDelete) return
+    setIsDeleting(true)
+    try {
+      const { error } = await supabase
+        .from('payments')
+        .delete()
+        .eq('id', paymentToDelete.id)
+
+      if (error) throw error
+
+      setPayments(prev => prev.filter(p => p.id !== paymentToDelete.id))
+      toast.success('Payment transaction deleted successfully')
+      setIsDeleteDialogOpen(false)
+      setPaymentToDelete(null)
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete payment')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
 
   const filteredPayments = payments.filter(p => 
     p.projects?.name?.toLowerCase().includes(search.toLowerCase()) || 
@@ -231,7 +256,16 @@ export default function PaymentsPage() {
                       <DropdownMenuContent align="end">
                         <DropdownMenuLabel>Actions</DropdownMenuLabel>
                         <DropdownMenuItem>View Receipt</DropdownMenuItem>
-                        <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive cursor-pointer"
+                          onClick={() => {
+                            setPaymentToDelete(payment)
+                            setIsDeleteDialogOpen(true)
+                          }}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete
+                        </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -241,6 +275,58 @@ export default function PaymentsPage() {
           </Table>
         </div>
       )}
+
+      {/* Delete Payment Confirmation Modal */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={(open) => {
+        if (!isDeleting) {
+          setIsDeleteDialogOpen(open)
+          if (!open) setPaymentToDelete(null)
+        }
+      }}>
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle className="text-destructive flex items-center gap-2 text-xl">
+              <AlertTriangle className="h-5 w-5" />
+              Delete Payment Transaction
+            </DialogTitle>
+            <DialogDescription className="pt-2 text-foreground/80">
+              Are you sure you want to delete this payment record of <strong className="text-foreground font-semibold">₹{Number(paymentToDelete?.amount).toLocaleString()}</strong> for <strong className="text-foreground font-semibold">{paymentToDelete?.projects?.name || 'Project'}</strong>?
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-3 px-4 rounded-lg bg-destructive/10 border border-destructive/20 text-sm space-y-1 text-muted-foreground">
+            <p className="font-medium text-destructive">This action will remove the transaction record from finance history.</p>
+            <p className="text-xs">Project pending balances and dashboard totals will adjust automatically.</p>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsDeleteDialogOpen(false)
+                setPaymentToDelete(null)
+              }}
+              disabled={isDeleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDeletePayment}
+              disabled={isDeleting}
+            >
+              {isDeleting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete Payment'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
