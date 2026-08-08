@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Plus, Banknote, Wallet, Receipt, CreditCard, FolderKanban, Loader2, IndianRupee, Trash2, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, Plus, Banknote, Wallet, Receipt, CreditCard, FolderKanban, Loader2, IndianRupee, Trash2, AlertTriangle, FileText, Eye, Printer, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -20,10 +20,12 @@ export default function ProjectDetailsPage() {
   const router = useRouter()
   
   const [project, setProject] = useState<any>(null)
+  const [invoices, setInvoices] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
   const [expenses, setExpenses] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   
+  const [isInvoiceDialogOpen, setIsInvoiceDialogOpen] = useState(false)
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false)
   const [isExpenseDialogOpen, setIsExpenseDialogOpen] = useState(false)
   const [expenseCategory, setExpenseCategory] = useState("Project")
@@ -31,41 +33,8 @@ export default function ProjectDetailsPage() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
 
-  const handleConfirmDelete = async () => {
-    if (!project) return
-    setIsDeleting(true)
-    try {
-      // 1. Delete associated payments
-      const { error: payErr } = await supabase
-        .from('payments')
-        .delete()
-        .eq('project_id', id)
-
-      if (payErr) throw payErr
-
-      // 2. Delete associated expenses
-      const { error: expErr } = await supabase
-        .from('expenses')
-        .delete()
-        .eq('project_id', id)
-
-      if (expErr) throw expErr
-
-      // 3. Delete the project
-      const { error: projErr } = await supabase
-        .from('projects')
-        .delete()
-        .eq('id', id)
-
-      if (projErr) throw projErr
-
-      toast.success(`Project "${project.name}" and connected transactions deleted successfully`)
-      router.push('/projects')
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to delete project')
-      setIsDeleting(false)
-    }
-  }
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -78,11 +47,7 @@ export default function ProjectDetailsPage() {
 
   const fetchProjectDetails = async () => {
     setLoading(true)
-    const [projRes, payRes, expRes] = await Promise.all([
-      supabase.from('projects').select('*, clients(name)').eq('id', id).single(),
-      supabase.from('payments').select('*').eq('project_id', id).order('payment_date', { ascending: false }),
-      supabase.from('expenses').select('*').eq('project_id', id).order('expense_date', { ascending: false })
-    ])
+    const projRes = await supabase.from('projects').select('*, clients(name)').eq('id', id).single()
 
     if (projRes.error) {
       toast.error('Failed to load project details')
@@ -90,10 +55,75 @@ export default function ProjectDetailsPage() {
       return
     }
 
+    // Safely query invoices (in case table is not created in Supabase yet)
+    let invData: any[] = []
+    const invRes = await supabase.from('invoices').select('*').eq('project_id', id).order('created_at', { ascending: false })
+    if (!invRes.error && invRes.data) {
+      invData = invRes.data
+    }
+
+    // Safely query payments (try with invoices join first, fallback to simple query if relation doesn't exist)
+    let payData: any[] = []
+    const payResWithInv = await supabase.from('payments').select('*, invoices(invoice_number)').eq('project_id', id).order('payment_date', { ascending: false })
+    if (payResWithInv.error) {
+      const payResSimple = await supabase.from('payments').select('*').eq('project_id', id).order('payment_date', { ascending: false })
+      if (payResSimple.data) payData = payResSimple.data
+    } else if (payResWithInv.data) {
+      payData = payResWithInv.data
+    }
+
+    // Query expenses
+    let expData: any[] = []
+    const expRes = await supabase.from('expenses').select('*').eq('project_id', id).order('expense_date', { ascending: false })
+    if (expRes.data) expData = expRes.data
+
     setProject(projRes.data)
-    setPayments(payRes.data || [])
-    setExpenses(expRes.data || [])
+    setInvoices(invData)
+    setPayments(payData)
+    setExpenses(expData)
     setLoading(false)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!project) return
+    setIsDeleting(true)
+    try {
+      await supabase.from('payments').delete().eq('project_id', id)
+      await supabase.from('expenses').delete().eq('project_id', id)
+      await supabase.from('invoices').delete().eq('project_id', id)
+      const { error: projErr } = await supabase.from('projects').delete().eq('id', id)
+
+      if (projErr) throw projErr
+
+      toast.success(`Project "${project.name}" deleted successfully`)
+      router.push('/projects')
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete project')
+      setIsDeleting(false)
+    }
+  }
+
+  const handleEditProject = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    setIsSavingEdit(true)
+    const formData = new FormData(e.currentTarget)
+    const updates = {
+      name: formData.get('name') as string,
+      project_type: formData.get('project_type') as string,
+      client_name: formData.get('client_name') as string,
+      total_value: Number(formData.get('total_value')),
+      due_date: formData.get('due_date') as string,
+      status: formData.get('status') as string,
+    }
+    const { data, error } = await supabase.from('projects').update(updates).eq('id', id).select('*, clients(name)').single()
+    if (error) {
+      toast.error(error.message)
+    } else if (data) {
+      setProject(data)
+      setIsEditDialogOpen(false)
+      toast.success('Project updated successfully')
+    }
+    setIsSavingEdit(false)
   }
 
   const getStatusBadge = (status: string) => {
@@ -106,20 +136,65 @@ export default function ProjectDetailsPage() {
     }
   }
 
+  const getInvoiceStatusBadge = (status: string) => {
+    switch (status) {
+      case 'PAID': return <Badge className="bg-emerald-600 hover:bg-emerald-700">PAID</Badge>
+      case 'PARTIALLY PAID': return <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-300">PARTIALLY PAID</Badge>
+      case 'OVERDUE': return <Badge variant="destructive">OVERDUE</Badge>
+      default: return <Badge variant="outline" className="text-gray-600">UNPAID</Badge>
+    }
+  }
+
+  const handleAddInvoice = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    const formData = new FormData(e.currentTarget)
+
+    const clientName = project.client_name || project.clients?.name || ''
+    const currentYear = new Date().getFullYear()
+    const invoiceNumber = `EK-${currentYear}-${String(invoices.length + 1).padStart(3, '0')}`
+
+    const newInvoice = {
+      project_id: id,
+      client_name: clientName,
+      invoice_number: invoiceNumber,
+      invoice_date: formData.get('invoice_date') as string,
+      due_date: formData.get('due_date') as string,
+      amount: Number(formData.get('amount')),
+      description: formData.get('description') as string,
+      notes: formData.get('notes') as string,
+      status: 'UNPAID'
+    }
+
+    const { data, error } = await supabase.from('invoices').insert([newInvoice]).select()
+
+    if (error) {
+      toast.error(error.message)
+    } else if (data) {
+      setInvoices([data[0], ...invoices])
+      setIsInvoiceDialogOpen(false)
+      toast.success(`Invoice ${invoiceNumber} created successfully`)
+    }
+  }
+
   const handleAddPayment = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const formData = new FormData(e.currentTarget)
     
+    const invoiceIdVal = formData.get('invoice_id') as string
+    const invoice_id = invoiceIdVal && invoiceIdVal !== 'none' ? invoiceIdVal : null
+
     const newPayment = {
       project_id: id,
+      invoice_id: invoice_id,
       amount: Number(formData.get('amount')),
       payment_date: formData.get('date') as string,
-      payment_type: formData.get('type') as string,
+      payment_type: formData.get('type') as string || 'Partial',
       payment_method: formData.get('method') as string,
-      notes: formData.get('notes') as string,
+      transaction_reference: formData.get('transaction_reference') as string || null,
+      notes: formData.get('notes') as string || null,
     }
 
-    const { data, error } = await supabase.from('payments').insert([newPayment]).select()
+    const { data, error } = await supabase.from('payments').insert([newPayment]).select('*, invoices(invoice_number)')
 
     if (error) {
       toast.error(error.message)
@@ -127,7 +202,7 @@ export default function ProjectDetailsPage() {
       setPayments([data[0], ...payments])
       setIsPaymentDialogOpen(false)
       toast.success('Payment recorded successfully')
-      fetchProjectDetails() // Refresh to update status if needed
+      fetchProjectDetails() // Refresh to update project and invoice calculations
     }
   }
 
@@ -147,7 +222,7 @@ export default function ProjectDetailsPage() {
       expense_date: formData.get('date') as string,
       payment_method: formData.get('method') as string,
       notes: formData.get('notes') as string,
-      is_recurring: false, // Project expenses usually aren't recurring
+      is_recurring: false,
     }
 
     const { data, error } = await supabase.from('expenses').insert([newExpense]).select()
@@ -171,10 +246,25 @@ export default function ProjectDetailsPage() {
 
   if (!project) return null
 
+  // Core Financial Calculations
   const totalReceived = payments.reduce((sum, p) => sum + Number(p.amount), 0)
   const totalExpenses = expenses.reduce((sum, e) => sum + Number(e.amount), 0)
-  const pendingBalance = Number(project.total_value) - totalReceived
-  const netProfit = Number(project.total_value) - totalExpenses
+  const pendingBalance = Math.max(0, Number(project.total_value) - totalReceived)
+  const netProfit = totalReceived - totalExpenses // Calculated strictly using received funds
+
+  // Process invoices with paid amounts
+  const processedInvoices = invoices.map(inv => {
+    const invPayments = payments.filter(p => p.invoice_id === inv.id)
+    const paid = invPayments.reduce((sum, p) => sum + Number(p.amount), 0)
+    const balance = Math.max(0, Number(inv.amount) - paid)
+    let derivedStatus = 'UNPAID'
+    if (paid >= Number(inv.amount)) derivedStatus = 'PAID'
+    else if (paid > 0) derivedStatus = 'PARTIALLY PAID'
+    return { ...inv, paid, balance, derivedStatus }
+  })
+
+  // Filter invoices suitable for Add Payment modal
+  const unpaidInvoices = processedInvoices.filter(inv => inv.derivedStatus !== 'PAID')
 
   return (
     <div className="p-4 md:p-8 space-y-8">
@@ -189,7 +279,7 @@ export default function ProjectDetailsPage() {
             {getStatusBadge(project.status)}
           </div>
           <p className="text-muted-foreground flex items-center gap-2">
-            Client: <span className="font-medium text-foreground">{project.clients?.name}</span>
+            Client: <span className="font-medium text-foreground">{project.client_name || project.clients?.name}</span>
             {project.due_date && (
               <>
                 <span className="text-muted-foreground/50">•</span>
@@ -200,6 +290,13 @@ export default function ProjectDetailsPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            className="cursor-pointer"
+            onClick={() => setIsEditDialogOpen(true)}
+          >
+            <Pencil className="mr-2 h-4 w-4" /> Edit Project
+          </Button>
           <Button
             variant="destructive"
             className="cursor-pointer"
@@ -236,7 +333,7 @@ export default function ProjectDetailsPage() {
             <CreditCard className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-destructive">₹{pendingBalance > 0 ? pendingBalance.toLocaleString() : 0}</div>
+            <div className="text-2xl font-bold text-destructive">₹{pendingBalance.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card>
@@ -258,6 +355,96 @@ export default function ProjectDetailsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Invoices Section */}
+      <Card className="flex flex-col">
+        <CardHeader className="flex flex-row items-center justify-between py-4 border-b">
+          <div>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <FileText className="h-5 w-5 text-primary" /> Project Invoices
+            </CardTitle>
+          </div>
+          <Dialog open={isInvoiceDialogOpen} onOpenChange={setIsInvoiceDialogOpen}>
+            <DialogTrigger render={<Button size="sm" variant="outline" className="cursor-pointer" />}>
+              <Plus className="mr-2 h-4 w-4" /> Create Invoice
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[425px]">
+              <DialogHeader>
+                <DialogTitle>Create Invoice for {project.name}</DialogTitle>
+                <DialogDescription>Generate a bill for the client requesting payment.</DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleAddInvoice}>
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="amount">Invoice Amount (₹)</Label>
+                      <Input id="amount" name="amount" type="number" required placeholder="10000" />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="invoice_date">Invoice Date</Label>
+                      <Input id="invoice_date" name="invoice_date" type="date" required defaultValue={new Date().toISOString().split('T')[0]} />
+                    </div>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="due_date">Due Date</Label>
+                    <Input id="due_date" name="due_date" type="date" required />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="description">Description</Label>
+                    <Textarea id="description" name="description" required placeholder="Software Development Services" defaultValue="Software Development Services" />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="notes">Notes (Optional)</Label>
+                    <Textarea id="notes" name="notes" placeholder="Optional notes for client..." />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="submit">Generate Invoice</Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </CardHeader>
+        <CardContent className="p-0">
+          {processedInvoices.length === 0 ? (
+            <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground">
+              <FileText className="h-8 w-8 mb-2 opacity-20" />
+              <p>No invoices generated yet for this project.</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Invoice #</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead className="text-right">Paid</TableHead>
+                  <TableHead className="text-right">Balance</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-[80px]"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {processedInvoices.map((inv) => (
+                  <TableRow key={inv.id}>
+                    <TableCell className="font-medium font-mono text-primary">{inv.invoice_number}</TableCell>
+                    <TableCell className="text-sm">{inv.invoice_date}</TableCell>
+                    <TableCell className="text-right font-medium">₹{Number(inv.amount).toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-emerald-600 font-medium">₹{inv.paid.toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-rose-600 font-medium">₹{inv.balance.toLocaleString()}</TableCell>
+                    <TableCell>{getInvoiceStatusBadge(inv.derivedStatus)}</TableCell>
+                    <TableCell>
+                      <Button size="sm" variant="ghost" onClick={() => router.push(`/invoices/${inv.id}`)}>
+                        <Eye className="h-4 w-4 mr-1" /> View
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Transactions Grid */}
       <div className="grid gap-6 md:grid-cols-2">
@@ -282,37 +469,47 @@ export default function ProjectDetailsPage() {
                         <Input id="amount" name="amount" type="number" required placeholder="5000" />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="date">Date</Label>
-                        <Input id="date" name="date" type="date" required />
+                        <Label htmlFor="date">Payment Date</Label>
+                        <Input id="date" name="date" type="date" required defaultValue={new Date().toISOString().split('T')[0]} />
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="grid gap-2">
-                        <Label htmlFor="type">Payment Type</Label>
-                        <Select name="type" required>
-                          <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="Advance">Advance</SelectItem>
-                            <SelectItem value="Partial">Partial</SelectItem>
-                            <SelectItem value="Final">Final</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor="method">Method</Label>
-                        <Select name="method" required>
-                          <SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="Bank">Bank</SelectItem>
-                            <SelectItem value="UPI">UPI</SelectItem>
-                            <SelectItem value="Card">Card</SelectItem>
-                            <SelectItem value="Cash">Cash</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
+
                     <div className="grid gap-2">
-                      <Label htmlFor="notes">Notes</Label>
+                      <Label htmlFor="method">Payment Method</Label>
+                      <Select name="method" required defaultValue="Bank Transfer">
+                        <SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                          <SelectItem value="UPI">UPI</SelectItem>
+                          <SelectItem value="Card">Card</SelectItem>
+                          <SelectItem value="Cash">Cash</SelectItem>
+                          <SelectItem value="Other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="grid gap-2">
+                      <Label htmlFor="invoice_id">Associated Invoice (Optional)</Label>
+                      <Select name="invoice_id" defaultValue="none">
+                        <SelectTrigger><SelectValue placeholder="No Invoice" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No Invoice</SelectItem>
+                          {unpaidInvoices.map(inv => (
+                            <SelectItem key={inv.id} value={inv.id}>
+                              {inv.invoice_number} (₹{inv.balance.toLocaleString()} due)
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="grid gap-2">
+                      <Label htmlFor="transaction_reference">Transaction Ref / UTR (Optional)</Label>
+                      <Input id="transaction_reference" name="transaction_reference" placeholder="e.g. UTR12345678" />
+                    </div>
+
+                    <div className="grid gap-2">
+                      <Label htmlFor="notes">Notes (Optional)</Label>
                       <Textarea id="notes" name="notes" placeholder="Optional details..." />
                     </div>
                   </div>
@@ -334,21 +531,32 @@ export default function ProjectDetailsPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Date</TableHead>
-                    <TableHead>Type</TableHead>
+                    <TableHead>Details</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="w-[70px]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {payments.map(payment => (
                     <TableRow key={payment.id}>
-                      <TableCell className="font-medium">{payment.payment_date}</TableCell>
+                      <TableCell className="font-medium text-xs whitespace-nowrap">{payment.payment_date}</TableCell>
                       <TableCell>
-                        <div className="flex flex-col">
-                          <span>{payment.payment_type}</span>
-                          <span className="text-xs text-muted-foreground">{payment.payment_method}</span>
+                        <div className="flex flex-col text-xs">
+                          <span className="font-medium text-foreground">{payment.payment_method}</span>
+                          <span className="text-muted-foreground">
+                            {payment.invoices?.invoice_number ? `Inv: ${payment.invoices.invoice_number}` : 'No Invoice'}
+                          </span>
+                          {payment.transaction_reference && (
+                            <span className="font-mono text-[10px] text-muted-foreground">Ref: {payment.transaction_reference}</span>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell className="text-right font-bold text-primary">₹{Number(payment.amount).toLocaleString()}</TableCell>
+                      <TableCell>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="View Receipt" onClick={() => router.push(`/receipts/payment/${payment.id}`)}>
+                          <Printer className="h-3.5 w-3.5" />
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -400,12 +608,12 @@ export default function ProjectDetailsPage() {
                       </div>
                       <div className="grid gap-2">
                         <Label htmlFor="date">Date</Label>
-                        <Input id="date" name="date" type="date" required />
+                        <Input id="date" name="date" type="date" required defaultValue={new Date().toISOString().split('T')[0]} />
                       </div>
                     </div>
                     <div className="grid gap-2">
                       <Label htmlFor="method">Payment Method</Label>
-                      <Select name="method" required>
+                      <Select name="method" required defaultValue="Bank">
                         <SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="Bank">Bank</SelectItem>
@@ -445,11 +653,11 @@ export default function ProjectDetailsPage() {
                 <TableBody>
                   {expenses.map(expense => (
                     <TableRow key={expense.id}>
-                      <TableCell className="font-medium">{expense.expense_date}</TableCell>
+                      <TableCell className="font-medium text-xs whitespace-nowrap">{expense.expense_date}</TableCell>
                       <TableCell>
-                        <div className="flex flex-col">
+                        <div className="flex flex-col text-xs">
                           <span>{expense.category}</span>
-                          <span className="text-xs text-muted-foreground">{expense.notes || expense.payment_method}</span>
+                          <span className="text-muted-foreground">{expense.notes || expense.payment_method}</span>
                         </div>
                       </TableCell>
                       <TableCell className="text-right font-bold text-destructive">-₹{Number(expense.amount).toLocaleString()}</TableCell>
@@ -484,9 +692,6 @@ export default function ProjectDetailsPage() {
               <li>All linked payments (Received: <span className="font-semibold text-foreground">₹{totalReceived.toLocaleString()}</span>)</li>
               <li>All associated project expenses (Expenses: <span className="font-semibold text-foreground">₹{totalExpenses.toLocaleString()}</span>)</li>
             </ul>
-            <p className="text-xs text-muted-foreground pt-1">
-              All financial dashboards and transaction history will automatically update. This action cannot be undone.
-            </p>
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0 mt-4">
@@ -505,13 +710,125 @@ export default function ProjectDetailsPage() {
               {isDeleting ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Deleting Project...
+                  Deleting...
                 </>
               ) : (
                 'Delete Project'
               )}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Project Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={(open) => {
+        if (!isSavingEdit) setIsEditDialogOpen(open)
+      }}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <Pencil className="h-5 w-5" /> Edit Project
+            </DialogTitle>
+            <DialogDescription>
+              Update project details. Changes take effect immediately.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleEditProject}>
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <Label htmlFor="edit-name">Project Name</Label>
+                <Input
+                  id="edit-name"
+                  name="name"
+                  required
+                  defaultValue={project?.name}
+                  placeholder="e.g. Website Redesign"
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="edit-project-type">Project Type</Label>
+                <Input
+                  id="edit-project-type"
+                  name="project_type"
+                  defaultValue={project?.project_type || ''}
+                  placeholder="e.g. E-Commerce Development"
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="edit-client-name">Client Name</Label>
+                <Input
+                  id="edit-client-name"
+                  name="client_name"
+                  required
+                  defaultValue={project?.client_name || project?.clients?.name || ''}
+                  placeholder="e.g. Afnan Teex Clothing"
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="edit-total-value">Total Project Value (₹)</Label>
+                <Input
+                  id="edit-total-value"
+                  name="total_value"
+                  type="number"
+                  required
+                  defaultValue={project?.total_value}
+                  placeholder="e.g. 60000"
+                />
+                <p className="text-xs text-muted-foreground">You can increase or decrease the project value here.</p>
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="edit-due-date">Due Date</Label>
+                <Input
+                  id="edit-due-date"
+                  name="due_date"
+                  type="date"
+                  defaultValue={project?.due_date ? project.due_date.split('T')[0] : ''}
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="edit-status">Status</Label>
+                <Select name="status" defaultValue={project?.status || 'Pending'}>
+                  <SelectTrigger id="edit-status">
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Pending">Pending</SelectItem>
+                    <SelectItem value="In Progress">In Progress</SelectItem>
+                    <SelectItem value="Partial Payment">Partial Payment</SelectItem>
+                    <SelectItem value="Fully Paid">Fully Paid</SelectItem>
+                    <SelectItem value="Completed">Completed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsEditDialogOpen(false)}
+                disabled={isSavingEdit}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSavingEdit}>
+                {isSavingEdit ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  'Save Changes'
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

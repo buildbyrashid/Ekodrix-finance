@@ -5,15 +5,13 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { 
   LayoutDashboard, 
-  Users, 
   FolderKanban, 
   CreditCard, 
   Receipt, 
   Banknote,
   LineChart,
-  Settings,
+  FileText,
   LogOut,
-  Menu,
   Moon,
   Sun,
   UserPlus
@@ -27,9 +25,9 @@ import { useRouter } from 'next/navigation'
 
 const navItems = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Clients', href: '/clients', icon: Users },
   { name: 'Employees', href: '/employees', icon: UserPlus },
   { name: 'Projects', href: '/projects', icon: FolderKanban },
+  { name: 'Invoices', href: '/invoices', icon: FileText },
   { name: 'Payments', href: '/payments', icon: CreditCard },
   { name: 'Expenses', href: '/expenses', icon: Receipt },
   { name: 'Salaries', href: '/salaries', icon: Banknote },

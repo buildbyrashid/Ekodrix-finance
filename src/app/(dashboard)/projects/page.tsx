@@ -18,7 +18,6 @@ import { useRouter } from 'next/navigation'
 export default function ProjectsPage() {
   const router = useRouter()
   const [projects, setProjects] = useState<any[]>([])
-  const [clients, setClients] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
   const [expenses, setExpenses] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -33,18 +32,15 @@ export default function ProjectsPage() {
   }, [])
 
   const fetchData = async () => {
-    const [projectsRes, clientsRes, payRes, expRes] = await Promise.all([
+    const [projectsRes, payRes, expRes] = await Promise.all([
       supabase.from('projects').select('*, clients(name)').order('created_at', { ascending: false }),
-      supabase.from('clients').select('id, name').order('name', { ascending: true }),
       supabase.from('payments').select('project_id, amount'),
       supabase.from('expenses').select('project_id, amount').not('project_id', 'is', null)
     ])
 
     if (projectsRes.error) toast.error('Failed to load projects')
-    if (clientsRes.error) toast.error('Failed to load clients')
 
     setProjects(projectsRes.data || [])
-    setClients(clientsRes.data || [])
     setPayments(payRes.data || [])
     setExpenses(expRes.data || [])
     setLoading(false)
@@ -195,7 +191,8 @@ export default function ProjectsPage() {
 
     const newProject = {
       name: formData.get('name') as string,
-      client_id: formData.get('client') as string,
+      client_name: formData.get('client_name') as string,
+      project_type: (formData.get('project_type') as string) || 'Website & Software Development',
       total_value: Number(formData.get('total_value')),
       due_date: formData.get('due_date') as string,
       status: 'Pending',
@@ -251,17 +248,12 @@ export default function ProjectsPage() {
                   <Input id="name" name="name" required placeholder="e.g. Website Redesign" />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="client">Client</Label>
-                  <Select name="client" required>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select a client" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {clients.map(client => (
-                        <SelectItem key={client.id} value={client.id}>{client.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="client_name">Client Name</Label>
+                  <Input id="client_name" name="client_name" required placeholder="e.g. Afnan Teex Clothing" />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="project_type">Project Type</Label>
+                  <Input id="project_type" name="project_type" placeholder="e.g. E-Commerce Development" />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="total_value">Total Value (₹)</Label>
@@ -358,7 +350,7 @@ export default function ProjectsPage() {
                           {project.name}
                         </div>
                       </TableCell>
-                      <TableCell>{project.clients?.name}</TableCell>
+                      <TableCell>{project.client_name || project.clients?.name}</TableCell>
                       <TableCell className="text-muted-foreground whitespace-nowrap">
                         {new Date(project.created_at).toLocaleDateString(undefined, {
                           month: 'short',
