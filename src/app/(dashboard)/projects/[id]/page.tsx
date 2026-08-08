@@ -151,7 +151,8 @@ export default function ProjectDetailsPage() {
 
     const clientName = project.client_name || project.clients?.name || ''
     const currentYear = new Date().getFullYear()
-    const invoiceNumber = `EK-${currentYear}-${String(invoices.length + 1).padStart(3, '0')}`
+    const invCount = 14 + invoices.length + 1
+    const invoiceNumber = `EK-${currentYear}-${String(invCount).padStart(3, '0')}`
 
     const newInvoice = {
       project_id: id,
