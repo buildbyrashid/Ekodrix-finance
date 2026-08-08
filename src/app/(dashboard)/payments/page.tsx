@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, Search, MoreHorizontal, ArrowDownRight, Trash2, Loader2, AlertTriangle } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, ArrowDownRight, Trash2, Loader2, AlertTriangle, Printer } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -14,10 +14,14 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import Image from 'next/image'
 import { createBrowserClient } from '@supabase/ssr'
+import { useRouter } from 'next/navigation'
 
 export default function PaymentsPage() {
+  const router = useRouter()
   const [payments, setPayments] = useState<any[]>([])
   const [projects, setProjects] = useState<any[]>([])
+  const [invoices, setInvoices] = useState<any[]>([])
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [loading, setLoading] = useState(true)
 
   const supabase = createBrowserClient(
@@ -30,18 +34,34 @@ export default function PaymentsPage() {
   }, [])
 
   const fetchData = async () => {
-    const [payRes, projRes] = await Promise.all([
-      supabase.from('payments').select('*, projects(name)').order('created_at', { ascending: false }),
-      supabase.from('projects').select('id, name').order('name', { ascending: true })
-    ])
-    
-    if (payRes.error) toast.error('Failed to load payments')
-    if (projRes.error) toast.error('Failed to load projects')
+    setLoading(true)
 
-    setPayments(payRes.data || [])
-    setProjects(projRes.data || [])
+    // 1. Projects
+    let projData: any[] = []
+    const projRes = await supabase.from('projects').select('id, name, client_name, clients(name)').order('name', { ascending: true })
+    if (projRes.data) projData = projRes.data
+
+    // 2. Invoices (safely)
+    let invData: any[] = []
+    const invRes = await supabase.from('invoices').select('id, project_id, invoice_number, amount').order('created_at', { ascending: false })
+    if (invRes.data) invData = invRes.data
+
+    // 3. Payments (with fallback)
+    let payData: any[] = []
+    const payResWithInv = await supabase.from('payments').select('*, projects(name, client_name, clients(name)), invoices(invoice_number)').order('created_at', { ascending: false })
+    if (payResWithInv.error) {
+      const payResSimple = await supabase.from('payments').select('*, projects(name, client_name, clients(name))').order('created_at', { ascending: false })
+      if (payResSimple.data) payData = payResSimple.data
+    } else if (payResWithInv.data) {
+      payData = payResWithInv.data
+    }
+
+    setPayments(payData)
+    setProjects(projData)
+    setInvoices(invData)
     setLoading(false)
   }
+
   const [search, setSearch] = useState('')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [paymentToDelete, setPaymentToDelete] = useState<any | null>(null)
@@ -70,28 +90,37 @@ export default function PaymentsPage() {
     }
   }
 
-  const filteredPayments = payments.filter(p => 
-    p.projects?.name?.toLowerCase().includes(search.toLowerCase()) || 
-    p.payment_type?.toLowerCase().includes(search.toLowerCase())
-  )
+  const filteredPayments = payments.filter(p => {
+    const clientName = p.projects?.client_name || p.projects?.clients?.name || ''
+    return p.projects?.name?.toLowerCase().includes(search.toLowerCase()) || 
+      clientName.toLowerCase().includes(search.toLowerCase()) ||
+      p.invoices?.invoice_number?.toLowerCase().includes(search.toLowerCase()) ||
+      p.payment_method?.toLowerCase().includes(search.toLowerCase())
+  })
+
+  const availableInvoicesForSelectedProject = invoices.filter(inv => inv.project_id === selectedProjectId)
 
   const handleAddPayment = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const formData = new FormData(e.currentTarget)
     
+    const invoiceIdVal = formData.get('invoice_id') as string
+    const invoice_id = invoiceIdVal && invoiceIdVal !== 'none' ? invoiceIdVal : null
+
     const newPayment = {
       project_id: formData.get('project') as string,
+      invoice_id: invoice_id,
       amount: Number(formData.get('amount')),
       payment_date: formData.get('date') as string,
-      payment_type: formData.get('type') as string,
       payment_method: formData.get('method') as string,
-      notes: formData.get('notes') as string,
+      transaction_reference: formData.get('transaction_reference') as string || null,
+      notes: formData.get('notes') as string || null,
     }
 
     const { data, error } = await supabase
       .from('payments')
       .insert([newPayment])
-      .select('*, projects(name)')
+      .select('*, projects(name, client_name, clients(name)), invoices(invoice_number)')
 
     if (error) {
       toast.error(error.message)
@@ -107,7 +136,7 @@ export default function PaymentsPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Payments Received</h1>
-          <p className="text-muted-foreground mt-1">Record and track payments from clients for specific projects.</p>
+          <p className="text-muted-foreground mt-1">Record and track payments received from clients.</p>
         </div>
         
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -125,7 +154,7 @@ export default function PaymentsPage() {
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
                   <Label htmlFor="project">Project</Label>
-                  <Select name="project" required>
+                  <Select name="project" required value={selectedProjectId} onValueChange={(val) => val && setSelectedProjectId(val)}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select a project" />
                     </SelectTrigger>
@@ -143,40 +172,47 @@ export default function PaymentsPage() {
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="date">Payment Date</Label>
-                    <Input id="date" name="date" type="date" required />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="type">Payment Type</Label>
-                    <Select name="type" required>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Advance">Advance</SelectItem>
-                        <SelectItem value="Partial">Partial</SelectItem>
-                        <SelectItem value="Final">Final</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="method">Method</Label>
-                    <Select name="method" required>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select method" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
-                        <SelectItem value="UPI">UPI</SelectItem>
-                        <SelectItem value="Card">Card</SelectItem>
-                        <SelectItem value="Cash">Cash</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <Input id="date" name="date" type="date" required defaultValue={new Date().toISOString().split('T')[0]} />
                   </div>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="notes">Notes</Label>
+                  <Label htmlFor="method">Method</Label>
+                  <Select name="method" required defaultValue="Bank Transfer">
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select method" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                      <SelectItem value="UPI">UPI</SelectItem>
+                      <SelectItem value="Card">Card</SelectItem>
+                      <SelectItem value="Cash">Cash</SelectItem>
+                      <SelectItem value="Other">Other</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="invoice_id">Associated Invoice (Optional)</Label>
+                  <Select name="invoice_id" defaultValue="none">
+                    <SelectTrigger><SelectValue placeholder="No Invoice" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No Invoice</SelectItem>
+                      {availableInvoicesForSelectedProject.map(inv => (
+                        <SelectItem key={inv.id} value={inv.id}>
+                          {inv.invoice_number} (₹{Number(inv.amount).toLocaleString()})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="transaction_reference">Transaction Reference (Optional)</Label>
+                  <Input id="transaction_reference" name="transaction_reference" placeholder="e.g. UTR / Ref Number" />
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="notes">Notes (Optional)</Label>
                   <Textarea id="notes" name="notes" placeholder="Optional notes about this payment" />
                 </div>
               </div>
@@ -191,7 +227,7 @@ export default function PaymentsPage() {
       <div className="flex items-center space-x-2">
         <Search className="w-5 h-5 text-muted-foreground" />
         <Input 
-          placeholder="Search by project or type..." 
+          placeholder="Search by client, project, or invoice #..." 
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="max-w-sm"
@@ -208,7 +244,7 @@ export default function PaymentsPage() {
             <Image src="/empty-state.png" alt="No payments" fill className="object-contain" />
           </div>
           <h3 className="text-xl font-semibold">No payments recorded</h3>
-          <p className="text-muted-foreground mt-2 max-w-sm">Record your first payment when a client pays an invoice.</p>
+          <p className="text-muted-foreground mt-2 max-w-sm">Record your first payment when a client pays.</p>
           <Button className="mt-6" onClick={() => setIsDialogOpen(true)}>
             <Plus className="mr-2 h-4 w-4" /> Record Payment
           </Button>
@@ -218,59 +254,73 @@ export default function PaymentsPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Project</TableHead>
                 <TableHead>Date</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Method</TableHead>
+                <TableHead>Client / Project</TableHead>
+                <TableHead>Invoice</TableHead>
+                <TableHead>Method & Ref</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
                 <TableHead className="w-[80px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredPayments.map((payment) => (
-                <TableRow key={payment.id}>
-                  <TableCell className="font-medium">
-                    <div className="flex items-center gap-2">
-                      <div className="bg-primary/10 p-1.5 rounded-full">
-                        <ArrowDownRight className="h-4 w-4 text-primary" />
+              {filteredPayments.map((payment) => {
+                const clientName = payment.projects?.client_name || payment.projects?.clients?.name || 'Client'
+                return (
+                  <TableRow key={payment.id}>
+                    <TableCell className="font-medium text-xs whitespace-nowrap">{payment.payment_date}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-col">
+                        <span className="font-medium text-sm">{clientName}</span>
+                        <span className="text-xs text-muted-foreground">{payment.projects?.name}</span>
                       </div>
-                      {payment.projects?.name}
-                    </div>
-                  </TableCell>
-                  <TableCell>{payment.payment_date}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={
-                      payment.payment_type === 'Final' ? 'bg-primary/10 text-primary border-primary/20' : ''
-                    }>{payment.payment_type}</Badge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{payment.payment_method}</TableCell>
-                  <TableCell className="text-right font-medium text-primary">
-                    +₹{Number(payment.amount).toLocaleString()}
-                  </TableCell>
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger render={<Button variant="ghost" className="h-8 w-8 p-0" />}>
-                        <span className="sr-only">Open menu</span>
-                        <MoreHorizontal className="h-4 w-4" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                        <DropdownMenuItem>View Receipt</DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="text-destructive focus:text-destructive cursor-pointer"
-                          onClick={() => {
-                            setPaymentToDelete(payment)
-                            setIsDeleteDialogOpen(true)
-                          }}
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))}
+                    </TableCell>
+                    <TableCell>
+                      {payment.invoices?.invoice_number ? (
+                        <Badge variant="outline" className="font-mono text-xs text-primary border-primary/30">
+                          {payment.invoices.invoice_number}
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground italic">No Invoice</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      <div className="flex flex-col">
+                        <span className="font-medium">{payment.payment_method}</span>
+                        {payment.transaction_reference && (
+                          <span className="font-mono text-muted-foreground text-[10px]">Ref: {payment.transaction_reference}</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right font-bold text-emerald-600">
+                      +₹{Number(payment.amount).toLocaleString()}
+                    </TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger render={<Button variant="ghost" className="h-8 w-8 p-0" />}>
+                          <span className="sr-only">Open menu</span>
+                          <MoreHorizontal className="h-4 w-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                          <DropdownMenuItem onClick={() => router.push(`/receipts/payment/${payment.id}`)}>
+                            <Printer className="mr-2 h-4 w-4" /> View / Print Receipt
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive cursor-pointer"
+                            onClick={() => {
+                              setPaymentToDelete(payment)
+                              setIsDeleteDialogOpen(true)
+                            }}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
             </TableBody>
           </Table>
         </div>
