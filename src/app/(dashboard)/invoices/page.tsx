@@ -65,9 +65,9 @@ export default function InvoicesPage() {
     const selProj = projects.find(p => p.id === projId)
     const clientName = selProj?.client_name || selProj?.clients?.name || ''
 
-    // Generate Invoice Number EK-YYYY-XXX
+    // Generate Invoice Number EK-YYYY-XXX starting from 15
     const currentYear = new Date().getFullYear()
-    const invCount = invoices.length + 1
+    const invCount = 14 + invoices.length + 1
     const invoiceNumber = `EK-${currentYear}-${String(invCount).padStart(3, '0')}`
 
     const newInvoice = {

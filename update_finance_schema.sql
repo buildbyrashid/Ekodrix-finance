@@ -47,6 +47,11 @@ ALTER TABLE public.payments
 ADD COLUMN IF NOT EXISTS invoice_id UUID REFERENCES public.invoices(id) ON DELETE SET NULL,
 ADD COLUMN IF NOT EXISTS transaction_reference TEXT;
 
--- 3. Extend Projects Table with optional project_type (e.g. 'E-Commerce Development', 'Mobile App', etc.)
+-- 3. Extend Projects Table with optional project_type & client_name, drop NOT NULL on client_id
 ALTER TABLE public.projects 
-ADD COLUMN IF NOT EXISTS project_type TEXT;
+ADD COLUMN IF NOT EXISTS project_type TEXT,
+ADD COLUMN IF NOT EXISTS client_name TEXT;
+
+ALTER TABLE public.projects 
+ALTER COLUMN client_id DROP NOT NULL;
+
