@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, Search, MoreHorizontal, FileText, ArrowUpDown, ArrowUp, ArrowDown, Trash2, Loader2, AlertTriangle, Eye, Printer } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, FileText, ArrowUpDown, ArrowUp, ArrowDown, Trash2, Loader2, AlertTriangle, Eye, Printer, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -26,6 +26,15 @@ export default function InvoicesPage() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
+
+  // Edit & Delete state
+  const [editingInvoice, setEditingInvoice] = useState<any>(null)
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
+
+  const [deletingInvoice, setDeletingInvoice] = useState<any>(null)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -94,6 +103,57 @@ export default function InvoicesPage() {
       setIsDialogOpen(false)
       toast.success(`Invoice ${invoiceNumber} created successfully`)
     }
+  }
+
+  const handleEditInvoice = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    if (!editingInvoice) return
+    setIsSavingEdit(true)
+    const formData = new FormData(e.currentTarget)
+
+    const updates = {
+      amount: Number(formData.get('amount')),
+      invoice_date: formData.get('invoice_date') as string,
+      due_date: formData.get('due_date') as string,
+      description: formData.get('description') as string,
+      notes: formData.get('notes') as string,
+    }
+
+    const { data, error } = await supabase
+      .from('invoices')
+      .update(updates)
+      .eq('id', editingInvoice.id)
+      .select('*, projects(name, client_name, clients(name))')
+
+    if (error) {
+      toast.error(error.message)
+    } else if (data && data.length > 0) {
+      setInvoices(invoices.map(i => i.id === editingInvoice.id ? data[0] : i))
+      setIsEditDialogOpen(false)
+      setEditingInvoice(null)
+      toast.success(`Invoice ${editingInvoice.invoice_number} updated successfully`)
+    }
+    setIsSavingEdit(false)
+  }
+
+  const handleDeleteInvoice = async () => {
+    if (!deletingInvoice) return
+    setIsDeleting(true)
+
+    const { error } = await supabase
+      .from('invoices')
+      .delete()
+      .eq('id', deletingInvoice.id)
+
+    if (error) {
+      toast.error(error.message)
+    } else {
+      setInvoices(invoices.filter(i => i.id !== deletingInvoice.id))
+      setIsDeleteDialogOpen(false)
+      setDeletingInvoice(null)
+      toast.success(`Invoice ${deletingInvoice.invoice_number} deleted successfully`)
+    }
+    setIsDeleting(false)
   }
 
   // Calculate invoice paid amount & status dynamically
@@ -282,8 +342,23 @@ export default function InvoicesPage() {
                           <DropdownMenuItem onClick={() => router.push(`/invoices/${inv.id}`)}>
                             <Eye className="mr-2 h-4 w-4" /> View / Print Invoice
                           </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => {
+                            setEditingInvoice(inv)
+                            setIsEditDialogOpen(true)
+                          }}>
+                            <Pencil className="mr-2 h-4 w-4" /> Edit Invoice
+                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => router.push(`/projects/${inv.project_id}`)}>
                             Record Payment
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive cursor-pointer"
+                            onClick={() => {
+                              setDeletingInvoice(inv)
+                              setIsDeleteDialogOpen(true)
+                            }}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" /> Delete Invoice
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -295,6 +370,106 @@ export default function InvoicesPage() {
           </Table>
         </div>
       )}
+
+      {/* Edit Invoice Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={(open) => {
+        if (!isSavingEdit) {
+          setIsEditDialogOpen(open)
+          if (!open) setEditingInvoice(null)
+        }
+      }}>
+        <DialogContent className="sm:max-w-[450px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-5 w-5 text-primary" /> Edit Invoice {editingInvoice?.invoice_number}
+            </DialogTitle>
+            <DialogDescription>
+              Update invoice details. Changes will reflect across the system.
+            </DialogDescription>
+          </DialogHeader>
+          {editingInvoice && (
+            <form onSubmit={handleEditInvoice}>
+              <div className="grid gap-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="edit_amount">Invoice Amount (₹)</Label>
+                    <Input id="edit_amount" name="amount" type="number" required defaultValue={editingInvoice.amount} />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="edit_invoice_date">Invoice Date</Label>
+                    <Input id="edit_invoice_date" name="invoice_date" type="date" required defaultValue={editingInvoice.invoice_date} />
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="edit_due_date">Due Date</Label>
+                  <Input id="edit_due_date" name="due_date" type="date" required defaultValue={editingInvoice.due_date} />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="edit_description">Description</Label>
+                  <Textarea id="edit_description" name="description" required defaultValue={editingInvoice.description} />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="edit_notes">Notes (Optional)</Label>
+                  <Textarea id="edit_notes" name="notes" defaultValue={editingInvoice.notes || ''} />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={isSavingEdit}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSavingEdit}>
+                  {isSavingEdit ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
+                    </>
+                  ) : (
+                    'Save Changes'
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Invoice Confirmation Dialog */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={(open) => {
+        if (!isDeleting) {
+          setIsDeleteDialogOpen(open)
+          if (!open) setDeletingInvoice(null)
+        }
+      }}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle className="text-destructive flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5" /> Delete Invoice
+            </DialogTitle>
+            <DialogDescription className="pt-2">
+              Are you sure you want to delete invoice <strong className="text-foreground">{deletingInvoice?.invoice_number}</strong>?
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-3 px-4 rounded-lg bg-destructive/10 border border-destructive/20 text-sm space-y-1">
+            <p className="font-medium text-destructive">This action cannot be undone.</p>
+            <p className="text-xs text-muted-foreground">Any payments linked to this invoice will remain recorded but will no longer reference this invoice.</p>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0 mt-4">
+            <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)} disabled={isDeleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteInvoice} disabled={isDeleting}>
+              {isDeleting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Deleting...
+                </>
+              ) : (
+                'Delete Invoice'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

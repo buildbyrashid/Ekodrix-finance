@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Plus, Banknote, Wallet, Receipt, CreditCard, FolderKanban, Loader2, IndianRupee, Trash2, AlertTriangle, FileText, Eye, Printer, Pencil } from 'lucide-react'
+import { ArrowLeft, Plus, Banknote, Wallet, Receipt, CreditCard, FolderKanban, Loader2, IndianRupee, Trash2, AlertTriangle, FileText, Eye, Printer, Pencil, MoreHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { toast } from 'sonner'
 import { createBrowserClient } from '@supabase/ssr'
 
@@ -35,6 +36,15 @@ export default function ProjectDetailsPage() {
 
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [isSavingEdit, setIsSavingEdit] = useState(false)
+
+  // Invoice Edit & Delete state
+  const [editingInvoice, setEditingInvoice] = useState<any>(null)
+  const [isEditInvoiceDialogOpen, setIsEditInvoiceDialogOpen] = useState(false)
+  const [isSavingEditInvoice, setIsSavingEditInvoice] = useState(false)
+
+  const [deletingInvoice, setDeletingInvoice] = useState<any>(null)
+  const [isDeleteInvoiceDialogOpen, setIsDeleteInvoiceDialogOpen] = useState(false)
+  const [isDeletingInvoice, setIsDeletingInvoice] = useState(false)
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -175,6 +185,57 @@ export default function ProjectDetailsPage() {
       setIsInvoiceDialogOpen(false)
       toast.success(`Invoice ${invoiceNumber} created successfully`)
     }
+  }
+
+  const handleEditInvoice = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    if (!editingInvoice) return
+    setIsSavingEditInvoice(true)
+    const formData = new FormData(e.currentTarget)
+
+    const updates = {
+      amount: Number(formData.get('amount')),
+      invoice_date: formData.get('invoice_date') as string,
+      due_date: formData.get('due_date') as string,
+      description: formData.get('description') as string,
+      notes: formData.get('notes') as string,
+    }
+
+    const { data, error } = await supabase
+      .from('invoices')
+      .update(updates)
+      .eq('id', editingInvoice.id)
+      .select()
+
+    if (error) {
+      toast.error(error.message)
+    } else if (data && data.length > 0) {
+      setInvoices(invoices.map(i => i.id === editingInvoice.id ? data[0] : i))
+      setIsEditInvoiceDialogOpen(false)
+      setEditingInvoice(null)
+      toast.success(`Invoice ${editingInvoice.invoice_number} updated successfully`)
+    }
+    setIsSavingEditInvoice(false)
+  }
+
+  const handleDeleteInvoice = async () => {
+    if (!deletingInvoice) return
+    setIsDeletingInvoice(true)
+
+    const { error } = await supabase
+      .from('invoices')
+      .delete()
+      .eq('id', deletingInvoice.id)
+
+    if (error) {
+      toast.error(error.message)
+    } else {
+      setInvoices(invoices.filter(i => i.id !== deletingInvoice.id))
+      setIsDeleteInvoiceDialogOpen(false)
+      setDeletingInvoice(null)
+      toast.success(`Invoice ${deletingInvoice.invoice_number} deleted successfully`)
+    }
+    setIsDeletingInvoice(false)
   }
 
   const handleAddPayment = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -435,9 +496,33 @@ export default function ProjectDetailsPage() {
                     <TableCell className="text-right text-rose-600 font-medium">₹{inv.balance.toLocaleString()}</TableCell>
                     <TableCell>{getInvoiceStatusBadge(inv.derivedStatus)}</TableCell>
                     <TableCell>
-                      <Button size="sm" variant="ghost" onClick={() => router.push(`/invoices/${inv.id}`)}>
-                        <Eye className="h-4 w-4 mr-1" /> View
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger render={<Button variant="ghost" className="h-8 w-8 p-0" />}>
+                          <span className="sr-only">Open menu</span>
+                          <MoreHorizontal className="h-4 w-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                          <DropdownMenuItem onClick={() => router.push(`/invoices/${inv.id}`)}>
+                            <Eye className="mr-2 h-4 w-4" /> View / Print
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => {
+                            setEditingInvoice(inv)
+                            setIsEditInvoiceDialogOpen(true)
+                          }}>
+                            <Pencil className="mr-2 h-4 w-4" /> Edit Invoice
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive cursor-pointer"
+                            onClick={() => {
+                              setDeletingInvoice(inv)
+                              setIsDeleteInvoiceDialogOpen(true)
+                            }}
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" /> Delete Invoice
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -830,6 +915,106 @@ export default function ProjectDetailsPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Invoice Dialog */}
+      <Dialog open={isEditInvoiceDialogOpen} onOpenChange={(open) => {
+        if (!isSavingEditInvoice) {
+          setIsEditInvoiceDialogOpen(open)
+          if (!open) setEditingInvoice(null)
+        }
+      }}>
+        <DialogContent className="sm:max-w-[450px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-5 w-5 text-primary" /> Edit Invoice {editingInvoice?.invoice_number}
+            </DialogTitle>
+            <DialogDescription>
+              Update invoice details for this project.
+            </DialogDescription>
+          </DialogHeader>
+          {editingInvoice && (
+            <form onSubmit={handleEditInvoice}>
+              <div className="grid gap-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="proj_edit_amount">Invoice Amount (₹)</Label>
+                    <Input id="proj_edit_amount" name="amount" type="number" required defaultValue={editingInvoice.amount} />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="proj_edit_invoice_date">Invoice Date</Label>
+                    <Input id="proj_edit_invoice_date" name="invoice_date" type="date" required defaultValue={editingInvoice.invoice_date} />
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="proj_edit_due_date">Due Date</Label>
+                  <Input id="proj_edit_due_date" name="due_date" type="date" required defaultValue={editingInvoice.due_date} />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="proj_edit_description">Description</Label>
+                  <Textarea id="proj_edit_description" name="description" required defaultValue={editingInvoice.description} />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="proj_edit_notes">Notes (Optional)</Label>
+                  <Textarea id="proj_edit_notes" name="notes" defaultValue={editingInvoice.notes || ''} />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setIsEditInvoiceDialogOpen(false)} disabled={isSavingEditInvoice}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSavingEditInvoice}>
+                  {isSavingEditInvoice ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
+                    </>
+                  ) : (
+                    'Save Changes'
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Invoice Confirmation Dialog */}
+      <Dialog open={isDeleteInvoiceDialogOpen} onOpenChange={(open) => {
+        if (!isDeletingInvoice) {
+          setIsDeleteInvoiceDialogOpen(open)
+          if (!open) setDeletingInvoice(null)
+        }
+      }}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle className="text-destructive flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5" /> Delete Invoice
+            </DialogTitle>
+            <DialogDescription className="pt-2">
+              Are you sure you want to delete invoice <strong className="text-foreground">{deletingInvoice?.invoice_number}</strong>?
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-3 px-4 rounded-lg bg-destructive/10 border border-destructive/20 text-sm space-y-1">
+            <p className="font-medium text-destructive">This action cannot be undone.</p>
+            <p className="text-xs text-muted-foreground">Any payments linked to this invoice will remain recorded but will no longer reference this invoice.</p>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0 mt-4">
+            <Button variant="outline" onClick={() => setIsDeleteInvoiceDialogOpen(false)} disabled={isDeletingInvoice}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteInvoice} disabled={isDeletingInvoice}>
+              {isDeletingInvoice ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Deleting...
+                </>
+              ) : (
+                'Delete Invoice'
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
