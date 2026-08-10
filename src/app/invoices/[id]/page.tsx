@@ -73,6 +73,23 @@ export default function InvoicePrintPage() {
   const invoiceAmount = Number(invoice.amount)
   const amountDue = Math.max(0, invoiceAmount - totalPaidAgainstInvoice)
 
+  // Parse itemized deliverables if available
+  let lineItems: { description: string; amount: number }[] = []
+  try {
+    if (invoice.description && invoice.description.trim().startsWith('[')) {
+      lineItems = JSON.parse(invoice.description)
+    }
+  } catch {
+    lineItems = []
+  }
+
+  if (lineItems.length === 0) {
+    lineItems = [{
+      description: invoice.description || (invoice.projects?.project_type ? `${invoice.projects.project_type} Services` : 'Software Development & Consulting Services'),
+      amount: invoiceAmount
+    }]
+  }
+
   return (
     <>
       <style jsx global>{`
@@ -119,6 +136,9 @@ export default function InvoicePrintPage() {
               <p className="text-sm font-semibold text-gray-700">#{invoice.invoice_number}</p>
               <div className="pt-2 text-xs text-gray-500 space-y-0.5">
                 <p><span className="font-medium text-gray-700">Invoice Date:</span> {new Date(invoice.invoice_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                {invoice.due_date && invoice.due_date !== invoice.invoice_date && (
+                  <p><span className="font-medium text-gray-700">Due Date:</span> {new Date(invoice.due_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                )}
               </div>
             </div>
           </div>
@@ -145,18 +165,25 @@ export default function InvoicePrintPage() {
                 </tr>
               </thead>
               <tbody className="divide-y text-sm">
-                <tr>
-                  <td className="py-4 px-4">
-                    <p className="font-medium text-gray-900">{invoice.description || (invoice.projects?.project_type ? `${invoice.projects.project_type} Services` : 'Software Development & Consulting Services')}</p>
-                    {invoice.notes && <p className="text-xs text-gray-500 mt-1">{invoice.notes}</p>}
-                  </td>
-                  <td className="py-4 px-4 text-right font-bold text-gray-900">
-                    ₹{invoiceAmount.toLocaleString('en-IN')}
-                  </td>
-                </tr>
+                {lineItems.map((item, idx) => (
+                  <tr key={idx}>
+                    <td className="py-4 px-4 font-medium text-gray-900">
+                      {item.description}
+                    </td>
+                    <td className="py-4 px-4 text-right font-bold text-gray-900">
+                      ₹{Number(item.amount).toLocaleString('en-IN')}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
+
+          {invoice.notes && (
+            <div className="text-xs text-gray-500 bg-slate-50 p-3 rounded border">
+              <span className="font-semibold text-gray-700">Notes / Instructions: </span>{invoice.notes}
+            </div>
+          )}
 
           {/* Totals */}
           <div className="flex justify-end pt-2">
