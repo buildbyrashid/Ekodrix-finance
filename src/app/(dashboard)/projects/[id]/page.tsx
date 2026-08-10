@@ -155,6 +155,15 @@ export default function ProjectDetailsPage() {
     }
   }
 
+  // Line Items state for Project Details Create & Edit Invoice (start empty)
+  const [createInvoiceItems, setCreateInvoiceItems] = useState<{ description: string; amount: number }[]>([
+    { description: '', amount: 0 }
+  ])
+  const [editInvoiceItems, setEditInvoiceItems] = useState<{ description: string; amount: number }[]>([])
+
+  const totalCreateInvoiceAmount = createInvoiceItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0)
+  const totalEditInvoiceAmount = editInvoiceItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0)
+
   const handleAddInvoice = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const formData = new FormData(e.currentTarget)
@@ -164,14 +173,20 @@ export default function ProjectDetailsPage() {
     const invCount = 14 + invoices.length + 1
     const invoiceNumber = `EK-${currentYear}-${String(invCount).padStart(3, '0')}`
 
+    const validItems = createInvoiceItems.filter(item => item.description.trim() !== '')
+    const itemsJson = JSON.stringify(validItems)
+
+    const invoiceDateVal = formData.get('invoice_date') as string
+    const dueDateVal = formData.get('due_date') as string
+
     const newInvoice = {
       project_id: id,
       client_name: clientName,
       invoice_number: invoiceNumber,
-      invoice_date: formData.get('invoice_date') as string,
-      due_date: formData.get('due_date') as string,
-      amount: Number(formData.get('amount')),
-      description: formData.get('description') as string,
+      invoice_date: invoiceDateVal,
+      due_date: dueDateVal ? dueDateVal : invoiceDateVal,
+      amount: totalCreateInvoiceAmount,
+      description: itemsJson,
       notes: formData.get('notes') as string,
       status: 'UNPAID'
     }
@@ -183,6 +198,7 @@ export default function ProjectDetailsPage() {
     } else if (data) {
       setInvoices([data[0], ...invoices])
       setIsInvoiceDialogOpen(false)
+      setCreateInvoiceItems([{ description: '', amount: 0 }])
       toast.success(`Invoice ${invoiceNumber} created successfully`)
     }
   }
@@ -193,11 +209,14 @@ export default function ProjectDetailsPage() {
     setIsSavingEditInvoice(true)
     const formData = new FormData(e.currentTarget)
 
+    const validItems = editInvoiceItems.filter(item => item.description.trim() !== '')
+    const itemsJson = JSON.stringify(validItems)
+
     const updates = {
-      amount: Number(formData.get('amount')),
+      amount: totalEditInvoiceAmount,
       invoice_date: formData.get('invoice_date') as string,
       due_date: formData.get('due_date') as string,
-      description: formData.get('description') as string,
+      description: itemsJson,
       notes: formData.get('notes') as string,
     }
 
@@ -426,42 +445,100 @@ export default function ProjectDetailsPage() {
               <FileText className="h-5 w-5 text-primary" /> Project Invoices
             </CardTitle>
           </div>
-          <Dialog open={isInvoiceDialogOpen} onOpenChange={setIsInvoiceDialogOpen}>
+               <Dialog open={isInvoiceDialogOpen} onOpenChange={setIsInvoiceDialogOpen}>
             <DialogTrigger render={<Button size="sm" variant="outline" className="cursor-pointer" />}>
               <Plus className="mr-2 h-4 w-4" /> Create Invoice
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[425px]">
+            <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Create Invoice for {project.name}</DialogTitle>
-                <DialogDescription>Generate a bill for the client requesting payment.</DialogDescription>
+                <DialogDescription>Add itemized deliverables (E-commerce, Logo, Domain, etc.).</DialogDescription>
               </DialogHeader>
               <form onSubmit={handleAddInvoice}>
                 <div className="grid gap-4 py-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="grid gap-2">
-                      <Label htmlFor="amount">Invoice Amount (₹)</Label>
-                      <Input id="amount" name="amount" type="number" required placeholder="10000" />
-                    </div>
-                    <div className="grid gap-2">
                       <Label htmlFor="invoice_date">Invoice Date</Label>
                       <Input id="invoice_date" name="invoice_date" type="date" required defaultValue={new Date().toISOString().split('T')[0]} />
                     </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="due_date">Due Date (Optional)</Label>
+                      <Input id="due_date" name="due_date" type="date" />
+                    </div>
                   </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="due_date">Due Date</Label>
-                    <Input id="due_date" name="due_date" type="date" required />
+
+                  {/* Dynamic Line Items Section */}
+                  <div className="space-y-3 border rounded-lg p-3 bg-muted/20">
+                    <div className="flex items-center justify-between">
+                      <Label className="font-semibold text-sm">Invoice Line Items</Label>
+                      <Button 
+                        type="button" 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => setCreateInvoiceItems([...createInvoiceItems, { description: '', amount: 0 }])}
+                        className="h-7 text-xs"
+                      >
+                        <Plus className="h-3.5 w-3.5 mr-1" /> Add Line Item
+                      </Button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {createInvoiceItems.map((item, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <Input
+                            placeholder="e.g. E-commerce Website, Logo Design..."
+                            value={item.description}
+                            onChange={(e) => {
+                              const updated = [...createInvoiceItems]
+                              updated[idx].description = e.target.value
+                              setCreateInvoiceItems(updated)
+                            }}
+                            className="flex-1 text-sm"
+                            required
+                          />
+                          <div className="relative w-32 shrink-0">
+                            <span className="absolute left-2.5 top-2.5 text-xs text-muted-foreground">₹</span>
+                            <Input
+                              type="number"
+                              placeholder="Amount"
+                              value={item.amount || ''}
+                              onChange={(e) => {
+                                const updated = [...createInvoiceItems]
+                                updated[idx].amount = Number(e.target.value) || 0
+                                setCreateInvoiceItems(updated)
+                              }}
+                              className="pl-6 text-sm text-right"
+                              required
+                            />
+                          </div>
+                          {createInvoiceItems.length > 1 && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 text-destructive hover:text-destructive shrink-0"
+                              onClick={() => setCreateInvoiceItems(createInvoiceItems.filter((_, i) => i !== idx))}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex justify-between items-center pt-2 border-t text-sm font-bold">
+                      <span>Total Invoice Amount:</span>
+                      <span className="text-base text-primary font-mono">₹{totalCreateInvoiceAmount.toLocaleString('en-IN')}</span>
+                    </div>
                   </div>
+
                   <div className="grid gap-2">
-                    <Label htmlFor="description">Description</Label>
-                    <Textarea id="description" name="description" required placeholder="Software Development Services" defaultValue="Software Development Services" />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="notes">Notes (Optional)</Label>
+                    <Label htmlFor="notes">Notes / Terms (Optional)</Label>
                     <Textarea id="notes" name="notes" placeholder="Optional notes for client..." />
                   </div>
                 </div>
                 <DialogFooter>
-                  <Button type="submit">Generate Invoice</Button>
+                  <Button type="submit">Generate Invoice (₹{totalCreateInvoiceAmount.toLocaleString('en-IN')})</Button>
                 </DialogFooter>
               </form>
             </DialogContent>
@@ -508,6 +585,17 @@ export default function ProjectDetailsPage() {
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => {
                             setEditingInvoice(inv)
+                            let items = []
+                            try {
+                              if (inv.description && inv.description.startsWith('[')) {
+                                items = JSON.parse(inv.description)
+                              } else if (inv.description) {
+                                items = [{ description: inv.description, amount: Number(inv.amount) || 0 }]
+                              }
+                            } catch {
+                              items = [{ description: inv.description || 'Services', amount: Number(inv.amount) || 0 }]
+                            }
+                            setEditInvoiceItems(items.length > 0 ? items : [{ description: 'Services', amount: Number(inv.amount) || 0 }])
                             setIsEditInvoiceDialogOpen(true)
                           }}>
                             <Pencil className="mr-2 h-4 w-4" /> Edit Invoice
@@ -661,61 +749,42 @@ export default function ProjectDetailsPage() {
               </DialogTrigger>
               <DialogContent className="sm:max-w-[425px]">
                 <DialogHeader>
-                  <DialogTitle>Record Project Expense</DialogTitle>
-                  <DialogDescription>Add a cost incurred specifically for {project.name}.</DialogDescription>
+                  <DialogTitle>Add Expense</DialogTitle>
+                  <DialogDescription>Record a project cost (outsourcing, domains, tools, etc.).</DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleAddExpense}>
                   <div className="grid gap-4 py-4">
                     <div className="grid gap-2">
                       <Label htmlFor="category">Category</Label>
-                      <Select name="category" required value={expenseCategory} onValueChange={(val) => val && setExpenseCategory(val)}>
+                      <Select name="category" value={expenseCategory} onValueChange={(val) => val && setExpenseCategory(val)}>
                         <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="Project">Project Specific</SelectItem>
-                          <SelectItem value="Rent">Rent</SelectItem>
-                          <SelectItem value="WiFi">WiFi</SelectItem>
-                          <SelectItem value="Subscription">Subscription</SelectItem>
-                          <SelectItem value="Travel">Travel</SelectItem>
-                          <SelectItem value="Miscellaneous">Miscellaneous</SelectItem>
-                          <SelectItem value="Other">Other...</SelectItem>
+                          <SelectItem value="Project">Project Expense</SelectItem>
+                          <SelectItem value="Software/Tools">Software / Tools</SelectItem>
+                          <SelectItem value="Subcontractor">Subcontractor / Freelancer</SelectItem>
+                          <SelectItem value="Hosting/Domain">Hosting / Domain</SelectItem>
+                          <SelectItem value="Marketing">Marketing</SelectItem>
+                          <SelectItem value="Other">Other</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
-                    {expenseCategory === 'Other' && (
-                      <div className="grid gap-2">
-                        <Label htmlFor="customCategory">Custom Category Name</Label>
-                        <Input id="customCategory" name="customCategory" required placeholder="Enter custom category" />
-                      </div>
-                    )}
                     <div className="grid grid-cols-2 gap-4">
                       <div className="grid gap-2">
                         <Label htmlFor="amount">Amount (₹)</Label>
-                        <Input id="amount" name="amount" type="number" required placeholder="1500" />
+                        <Input id="amount" name="amount" type="number" required placeholder="1000" />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="date">Date</Label>
-                        <Input id="date" name="date" type="date" required defaultValue={new Date().toISOString().split('T')[0]} />
+                        <Label htmlFor="expense_date">Expense Date</Label>
+                        <Input id="expense_date" name="expense_date" type="date" required defaultValue={new Date().toISOString().split('T')[0]} />
                       </div>
                     </div>
                     <div className="grid gap-2">
-                      <Label htmlFor="method">Payment Method</Label>
-                      <Select name="method" required defaultValue="Bank">
-                        <SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Bank">Bank</SelectItem>
-                          <SelectItem value="UPI">UPI</SelectItem>
-                          <SelectItem value="Card">Card</SelectItem>
-                          <SelectItem value="Cash">Cash</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="notes">Notes / Reason</Label>
-                      <Textarea id="notes" name="notes" placeholder="e.g. Bought domain name..." />
+                      <Label htmlFor="description">Description</Label>
+                      <Input id="description" name="description" required placeholder="e.g. Domain purchase or UI kit" />
                     </div>
                   </div>
                   <DialogFooter>
-                    <Button type="submit" variant="destructive">Save Expense</Button>
+                    <Button type="submit">Record Expense</Button>
                   </DialogFooter>
                 </form>
               </DialogContent>
@@ -724,7 +793,7 @@ export default function ProjectDetailsPage() {
           <CardContent className="p-0 flex-1">
             {expenses.length === 0 ? (
               <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground">
-                <Receipt className="h-8 w-8 mb-2 opacity-20" />
+                <CreditCard className="h-8 w-8 mb-2 opacity-20" />
                 <p>No expenses recorded yet.</p>
               </div>
             ) : (
@@ -732,7 +801,7 @@ export default function ProjectDetailsPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Date</TableHead>
-                    <TableHead>Details</TableHead>
+                    <TableHead>Description</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -742,11 +811,11 @@ export default function ProjectDetailsPage() {
                       <TableCell className="font-medium text-xs whitespace-nowrap">{expense.expense_date}</TableCell>
                       <TableCell>
                         <div className="flex flex-col text-xs">
-                          <span>{expense.category}</span>
-                          <span className="text-muted-foreground">{expense.notes || expense.payment_method}</span>
+                          <span className="font-medium text-foreground">{expense.description}</span>
+                          <span className="text-muted-foreground">{expense.category}</span>
                         </div>
                       </TableCell>
-                      <TableCell className="text-right font-bold text-destructive">-₹{Number(expense.amount).toLocaleString()}</TableCell>
+                      <TableCell className="text-right font-bold text-rose-600">₹{Number(expense.amount).toLocaleString()}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -925,13 +994,13 @@ export default function ProjectDetailsPage() {
           if (!open) setEditingInvoice(null)
         }
       }}>
-        <DialogContent className="sm:max-w-[450px]">
+        <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Pencil className="h-5 w-5 text-primary" /> Edit Invoice {editingInvoice?.invoice_number}
             </DialogTitle>
             <DialogDescription>
-              Update invoice details for this project.
+              Update invoice line items and details. Total updates automatically.
             </DialogDescription>
           </DialogHeader>
           {editingInvoice && (
@@ -939,25 +1008,83 @@ export default function ProjectDetailsPage() {
               <div className="grid gap-4 py-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="grid gap-2">
-                    <Label htmlFor="proj_edit_amount">Invoice Amount (₹)</Label>
-                    <Input id="proj_edit_amount" name="amount" type="number" required defaultValue={editingInvoice.amount} />
+                    <Label htmlFor="edit_invoice_date">Invoice Date</Label>
+                    <Input id="edit_invoice_date" name="invoice_date" type="date" required defaultValue={editingInvoice.invoice_date} />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="proj_edit_invoice_date">Invoice Date</Label>
-                    <Input id="proj_edit_invoice_date" name="invoice_date" type="date" required defaultValue={editingInvoice.invoice_date} />
+                    <Label htmlFor="edit_due_date">Due Date</Label>
+                    <Input id="edit_due_date" name="due_date" type="date" required defaultValue={editingInvoice.due_date} />
                   </div>
                 </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="proj_edit_due_date">Due Date</Label>
-                  <Input id="proj_edit_due_date" name="due_date" type="date" required defaultValue={editingInvoice.due_date} />
+
+                {/* Edit Line Items */}
+                <div className="space-y-3 border rounded-lg p-3 bg-muted/20">
+                  <div className="flex items-center justify-between">
+                    <Label className="font-semibold text-sm">Invoice Line Items</Label>
+                    <Button 
+                      type="button" 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => setEditInvoiceItems([...editInvoiceItems, { description: '', amount: 0 }])}
+                      className="h-7 text-xs"
+                    >
+                      <Plus className="h-3.5 w-3.5 mr-1" /> Add Line Item
+                    </Button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {editInvoiceItems.map((item, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <Input
+                          placeholder="Description"
+                          value={item.description}
+                          onChange={(e) => {
+                            const updated = [...editInvoiceItems]
+                            updated[idx].description = e.target.value
+                            setEditInvoiceItems(updated)
+                          }}
+                          className="flex-1 text-sm"
+                          required
+                        />
+                        <div className="relative w-32 shrink-0">
+                          <span className="absolute left-2.5 top-2.5 text-xs text-muted-foreground">₹</span>
+                          <Input
+                            type="number"
+                            placeholder="Amount"
+                            value={item.amount || ''}
+                            onChange={(e) => {
+                              const updated = [...editInvoiceItems]
+                              updated[idx].amount = Number(e.target.value) || 0
+                              setEditInvoiceItems(updated)
+                            }}
+                            className="pl-6 text-sm text-right"
+                            required
+                          />
+                        </div>
+                        {editInvoiceItems.length > 1 && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 text-destructive hover:text-destructive shrink-0"
+                            onClick={() => setEditInvoiceItems(editInvoiceItems.filter((_, i) => i !== idx))}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex justify-between items-center pt-2 border-t text-sm font-bold">
+                    <span>Total Amount:</span>
+                    <span className="text-base text-primary font-mono">₹{totalEditInvoiceAmount.toLocaleString('en-IN')}</span>
+                  </div>
                 </div>
+
                 <div className="grid gap-2">
-                  <Label htmlFor="proj_edit_description">Description</Label>
-                  <Textarea id="proj_edit_description" name="description" required defaultValue={editingInvoice.description} />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="proj_edit_notes">Notes (Optional)</Label>
-                  <Textarea id="proj_edit_notes" name="notes" defaultValue={editingInvoice.notes || ''} />
+                  <Label htmlFor="edit_notes">Notes (Optional)</Label>
+                  <Textarea id="edit_notes" name="notes" defaultValue={editingInvoice.notes || ''} />
                 </div>
               </div>
               <DialogFooter>
@@ -970,7 +1097,7 @@ export default function ProjectDetailsPage() {
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
                     </>
                   ) : (
-                    'Save Changes'
+                    `Save Changes (₹${totalEditInvoiceAmount.toLocaleString('en-IN')})`
                   )}
                 </Button>
               </DialogFooter>

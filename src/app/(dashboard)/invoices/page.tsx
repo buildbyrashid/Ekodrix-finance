@@ -41,6 +41,17 @@ export default function InvoicesPage() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   )
 
+  // Line Items state for Create Invoice (start with 1 blank row)
+  const [createItems, setCreateItems] = useState<{ description: string; amount: number }[]>([
+    { description: '', amount: 0 }
+  ])
+
+  // Line Items state for Edit Invoice
+  const [editItems, setEditItems] = useState<{ description: string; amount: number }[]>([])
+
+  const totalCreateAmount = createItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0)
+  const totalEditAmount = editItems.reduce((sum, item) => sum + (Number(item.amount) || 0), 0)
+
   useEffect(() => {
     fetchData()
   }, [])
@@ -79,14 +90,21 @@ export default function InvoicesPage() {
     const invCount = 14 + invoices.length + 1
     const invoiceNumber = `EK-${currentYear}-${String(invCount).padStart(3, '0')}`
 
+    // Parse line items JSON string into description or store structured
+    const validItems = createItems.filter(item => item.description.trim() !== '')
+    const itemsJson = JSON.stringify(validItems)
+
+    const invoiceDateVal = formData.get('invoice_date') as string
+    const dueDateVal = formData.get('due_date') as string
+
     const newInvoice = {
       project_id: projId,
       client_name: clientName,
       invoice_number: invoiceNumber,
-      invoice_date: formData.get('invoice_date') as string,
-      due_date: formData.get('due_date') as string,
-      amount: Number(formData.get('amount')),
-      description: formData.get('description') as string,
+      invoice_date: invoiceDateVal,
+      due_date: dueDateVal ? dueDateVal : invoiceDateVal,
+      amount: totalCreateAmount,
+      description: itemsJson,
       notes: formData.get('notes') as string,
       status: 'UNPAID'
     }
@@ -101,6 +119,7 @@ export default function InvoicesPage() {
     } else if (data) {
       setInvoices([data[0], ...invoices])
       setIsDialogOpen(false)
+      setCreateItems([{ description: '', amount: 0 }])
       toast.success(`Invoice ${invoiceNumber} created successfully`)
     }
   }
@@ -111,11 +130,14 @@ export default function InvoicesPage() {
     setIsSavingEdit(true)
     const formData = new FormData(e.currentTarget)
 
+    const validItems = editItems.filter(item => item.description.trim() !== '')
+    const itemsJson = JSON.stringify(validItems)
+
     const updates = {
-      amount: Number(formData.get('amount')),
+      amount: totalEditAmount,
       invoice_date: formData.get('invoice_date') as string,
       due_date: formData.get('due_date') as string,
-      description: formData.get('description') as string,
+      description: itemsJson,
       notes: formData.get('notes') as string,
     }
 
@@ -211,11 +233,11 @@ export default function InvoicesPage() {
           <DialogTrigger render={<Button />}>
             <Plus className="mr-2 h-4 w-4" /> Create Invoice
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[450px]">
+          <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Create New Invoice</DialogTitle>
               <DialogDescription>
-                Generate a custom invoice for a project.
+                Generate a custom invoice with itemized services (E-commerce, Logo, Domain, etc.).
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleCreateInvoice}>
@@ -231,31 +253,90 @@ export default function InvoicesPage() {
                     </SelectContent>
                   </Select>
                 </div>
+
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="amount">Invoice Amount (₹)</Label>
-                    <Input id="amount" name="amount" type="number" required placeholder="10000" />
-                  </div>
                   <div className="grid gap-2">
                     <Label htmlFor="invoice_date">Invoice Date</Label>
                     <Input id="invoice_date" name="invoice_date" type="date" required defaultValue={new Date().toISOString().split('T')[0]} />
                   </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="due_date">Due Date (Optional)</Label>
+                    <Input id="due_date" name="due_date" type="date" />
+                  </div>
                 </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="due_date">Due Date</Label>
-                  <Input id="due_date" name="due_date" type="date" required />
+
+                {/* Dynamic Line Items Section */}
+                <div className="space-y-3 border rounded-lg p-3 bg-muted/20">
+                  <div className="flex items-center justify-between">
+                    <Label className="font-semibold text-sm">Invoice Deliverables / Line Items</Label>
+                    <Button 
+                      type="button" 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => setCreateItems([...createItems, { description: '', amount: 0 }])}
+                      className="h-7 text-xs"
+                    >
+                      <Plus className="h-3.5 w-3.5 mr-1" /> Add Line Item
+                    </Button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {createItems.map((item, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <Input
+                          placeholder="e.g. E-commerce Website, Logo Design..."
+                          value={item.description}
+                          onChange={(e) => {
+                            const updated = [...createItems]
+                            updated[idx].description = e.target.value
+                            setCreateItems(updated)
+                          }}
+                          className="flex-1 text-sm"
+                          required
+                        />
+                        <div className="relative w-32 shrink-0">
+                          <span className="absolute left-2.5 top-2.5 text-xs text-muted-foreground">₹</span>
+                          <Input
+                            type="number"
+                            placeholder="Amount"
+                            value={item.amount || ''}
+                            onChange={(e) => {
+                              const updated = [...createItems]
+                              updated[idx].amount = Number(e.target.value) || 0
+                              setCreateItems(updated)
+                            }}
+                            className="pl-6 text-sm text-right"
+                            required
+                          />
+                        </div>
+                        {createItems.length > 1 && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 text-destructive hover:text-destructive shrink-0"
+                            onClick={() => setCreateItems(createItems.filter((_, i) => i !== idx))}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex justify-between items-center pt-2 border-t text-sm font-bold">
+                    <span>Total Invoice Amount:</span>
+                    <span className="text-base text-primary font-mono">₹{totalCreateAmount.toLocaleString('en-IN')}</span>
+                  </div>
                 </div>
+
                 <div className="grid gap-2">
-                  <Label htmlFor="description">Description</Label>
-                  <Textarea id="description" name="description" required placeholder="Software Development Services" defaultValue="Software Development Services" />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="notes">Notes (Optional)</Label>
+                  <Label htmlFor="notes">Notes / Terms (Optional)</Label>
                   <Textarea id="notes" name="notes" placeholder="Payment terms or instructions..." />
                 </div>
               </div>
               <DialogFooter>
-                <Button type="submit">Generate Invoice</Button>
+                <Button type="submit">Generate Invoice (₹{totalCreateAmount.toLocaleString('en-IN')})</Button>
               </DialogFooter>
             </form>
           </DialogContent>
@@ -344,6 +425,17 @@ export default function InvoicesPage() {
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => {
                             setEditingInvoice(inv)
+                            let items = []
+                            try {
+                              if (inv.description && inv.description.startsWith('[')) {
+                                items = JSON.parse(inv.description)
+                              } else if (inv.description) {
+                                items = [{ description: inv.description, amount: Number(inv.amount) || 0 }]
+                              }
+                            } catch {
+                              items = [{ description: inv.description || 'Services', amount: Number(inv.amount) || 0 }]
+                            }
+                            setEditItems(items.length > 0 ? items : [{ description: 'Services', amount: Number(inv.amount) || 0 }])
                             setIsEditDialogOpen(true)
                           }}>
                             <Pencil className="mr-2 h-4 w-4" /> Edit Invoice
@@ -378,13 +470,13 @@ export default function InvoicesPage() {
           if (!open) setEditingInvoice(null)
         }
       }}>
-        <DialogContent className="sm:max-w-[450px]">
+        <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Pencil className="h-5 w-5 text-primary" /> Edit Invoice {editingInvoice?.invoice_number}
             </DialogTitle>
             <DialogDescription>
-              Update invoice details. Changes will reflect across the system.
+              Update invoice line items and details. Total updates automatically.
             </DialogDescription>
           </DialogHeader>
           {editingInvoice && (
@@ -392,22 +484,80 @@ export default function InvoicesPage() {
               <div className="grid gap-4 py-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="grid gap-2">
-                    <Label htmlFor="edit_amount">Invoice Amount (₹)</Label>
-                    <Input id="edit_amount" name="amount" type="number" required defaultValue={editingInvoice.amount} />
-                  </div>
-                  <div className="grid gap-2">
                     <Label htmlFor="edit_invoice_date">Invoice Date</Label>
                     <Input id="edit_invoice_date" name="invoice_date" type="date" required defaultValue={editingInvoice.invoice_date} />
                   </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="edit_due_date">Due Date (Optional)</Label>
+                    <Input id="edit_due_date" name="due_date" type="date" defaultValue={editingInvoice.due_date || ''} />
+                  </div>
                 </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="edit_due_date">Due Date</Label>
-                  <Input id="edit_due_date" name="due_date" type="date" required defaultValue={editingInvoice.due_date} />
+
+                {/* Edit Line Items */}
+                <div className="space-y-3 border rounded-lg p-3 bg-muted/20">
+                  <div className="flex items-center justify-between">
+                    <Label className="font-semibold text-sm">Invoice Line Items</Label>
+                    <Button 
+                      type="button" 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => setEditItems([...editItems, { description: '', amount: 0 }])}
+                      className="h-7 text-xs"
+                    >
+                      <Plus className="h-3.5 w-3.5 mr-1" /> Add Line Item
+                    </Button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {editItems.map((item, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <Input
+                          placeholder="Description"
+                          value={item.description}
+                          onChange={(e) => {
+                            const updated = [...editItems]
+                            updated[idx].description = e.target.value
+                            setEditItems(updated)
+                          }}
+                          className="flex-1 text-sm"
+                          required
+                        />
+                        <div className="relative w-32 shrink-0">
+                          <span className="absolute left-2.5 top-2.5 text-xs text-muted-foreground">₹</span>
+                          <Input
+                            type="number"
+                            placeholder="Amount"
+                            value={item.amount || ''}
+                            onChange={(e) => {
+                              const updated = [...editItems]
+                              updated[idx].amount = Number(e.target.value) || 0
+                              setEditItems(updated)
+                            }}
+                            className="pl-6 text-sm text-right"
+                            required
+                          />
+                        </div>
+                        {editItems.length > 1 && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 text-destructive hover:text-destructive shrink-0"
+                            onClick={() => setEditItems(editItems.filter((_, i) => i !== idx))}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex justify-between items-center pt-2 border-t text-sm font-bold">
+                    <span>Total Amount:</span>
+                    <span className="text-base text-primary font-mono">₹{totalEditAmount.toLocaleString('en-IN')}</span>
+                  </div>
                 </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="edit_description">Description</Label>
-                  <Textarea id="edit_description" name="description" required defaultValue={editingInvoice.description} />
-                </div>
+
                 <div className="grid gap-2">
                   <Label htmlFor="edit_notes">Notes (Optional)</Label>
                   <Textarea id="edit_notes" name="notes" defaultValue={editingInvoice.notes || ''} />
@@ -423,7 +573,7 @@ export default function InvoicesPage() {
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
                     </>
                   ) : (
-                    'Save Changes'
+                    `Save Changes (₹${totalEditAmount.toLocaleString('en-IN')})`
                   )}
                 </Button>
               </DialogFooter>
