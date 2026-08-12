@@ -85,9 +85,10 @@ export default function InvoicesPage() {
     const selProj = projects.find(p => p.id === projId)
     const clientName = selProj?.client_name || selProj?.clients?.name || ''
 
-    // Generate Invoice Number EK-YYYY-XXX starting from 15
+    // Generate Invoice Number EK-YYYY-XXX — query live count so number is always sequential
     const currentYear = new Date().getFullYear()
-    const invCount = 14 + invoices.length + 1
+    const { count: liveInvCount } = await supabase.from('invoices').select('id', { count: 'exact', head: true })
+    const invCount = 15 + (liveInvCount ?? invoices.length) + 1
     const invoiceNumber = `EK-${currentYear}-${String(invCount).padStart(3, '0')}`
 
     // Parse line items JSON string into description or store structured

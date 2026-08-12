@@ -13,6 +13,7 @@ export default function PaymentReceiptPrintPage() {
   const [payment, setPayment] = useState<any>(null)
   const [project, setProject] = useState<any>(null)
   const [allProjectPayments, setAllProjectPayments] = useState<any[]>([])
+  const [allPayments, setAllPayments] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
   const supabase = createBrowserClient(
@@ -33,14 +34,16 @@ export default function PaymentReceiptPrintPage() {
         setPayment(payData)
         const projId = payData.project_id
 
-        // 2. Fetch project with client join & all payments ordered by date to compute dynamic totals & sequence
-        const [projRes, allPayRes] = await Promise.all([
+        // 2. Fetch project, all project payments (for totals) & all global payments (for receipt sequence)
+        const [projRes, allPayRes, globalPayRes] = await Promise.all([
           supabase.from('projects').select('*, clients(name)').eq('id', projId).single(),
-          supabase.from('payments').select('id, amount, created_at').eq('project_id', projId).order('created_at', { ascending: true })
+          supabase.from('payments').select('id, amount, created_at').eq('project_id', projId).order('created_at', { ascending: true }),
+          supabase.from('payments').select('id, created_at').order('created_at', { ascending: true })
         ])
 
         if (projRes.data) setProject(projRes.data)
         if (allPayRes.data) setAllProjectPayments(allPayRes.data)
+        if (globalPayRes.data) setAllPayments(globalPayRes.data)
       }
 
       setLoading(false)
@@ -48,11 +51,12 @@ export default function PaymentReceiptPrintPage() {
     fetchReceiptData()
   }, [id])
 
-  // Format Receipt No e.g. REC-2026-015, REC-2026-016...
+  // Format Receipt No: REC-YYYY-0XX based on global payment position (15 + global index + 1)
+  // e.g. 1st payment ever = REC-2026-016, 2nd = REC-2026-017, etc.
   const paymentDateObj = payment?.payment_date ? new Date(payment.payment_date) : new Date()
   const receiptYear = paymentDateObj.getFullYear()
-  const paymentIndex = allProjectPayments.findIndex(p => p?.id === payment?.id)
-  const seqNumber = paymentIndex >= 0 ? 15 + paymentIndex : 15
+  const globalPaymentIndex = allPayments.findIndex(p => p?.id === payment?.id)
+  const seqNumber = globalPaymentIndex >= 0 ? 15 + globalPaymentIndex + 1 : 15
   const receiptNumberStr = `REC-${receiptYear}-${String(seqNumber).padStart(3, '0')}`
 
   useEffect(() => {
