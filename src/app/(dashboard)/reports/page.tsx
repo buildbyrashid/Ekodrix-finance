@@ -1,15 +1,17 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { Download, Filter, Loader2 } from 'lucide-react'
+import { Download, Filter, Loader2, Eye } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend, PieChart, Pie, Cell } from 'recharts'
 import { toast } from 'sonner'
 import { createBrowserClient } from '@supabase/ssr'
 import { format, parseISO } from 'date-fns'
+import { useAuth } from '@/lib/auth-context'
 
 const COLORS = ['var(--color-primary)', 'var(--color-chart-2)', 'var(--color-chart-3)', 'var(--color-chart-4)', 'var(--color-chart-5)']
 
@@ -23,6 +25,7 @@ export default function ReportsPage() {
   const [salaries, setSalaries] = useState<any[]>([])
   
   const [yearFilter, setYearFilter] = useState(new Date().getFullYear().toString())
+  const { isFounder, loading: authLoading } = useAuth()
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -31,8 +34,10 @@ export default function ReportsPage() {
   
   useEffect(() => {
     setMounted(true)
-    fetchData()
-  }, [])
+    if (!authLoading) {
+      fetchData()
+    }
+  }, [authLoading, isFounder, yearFilter])
 
   const fetchData = async () => {
     setLoading(true)
@@ -78,17 +83,19 @@ export default function ReportsPage() {
       }
     })
     
-    salaries.forEach(s => {
-      if(!s.month_year) return;
-      const d = parseISO(s.month_year)
-      if (d.getFullYear().toString() === yearFilter) {
-        const m = format(d, 'MMM')
-        if (map.has(m)) map.get(m)!.expenses += Number(s.amount)
-      }
-    })
+    if (!isFounder) {
+      salaries.forEach(s => {
+        if(!s.month_year) return;
+        const d = parseISO(s.month_year)
+        if (d.getFullYear().toString() === yearFilter) {
+          const m = format(d, 'MMM')
+          if (map.has(m)) map.get(m)!.expenses += Number(s.amount)
+        }
+      })
+    }
 
     return Array.from(map.values())
-  }, [payments, expenses, salaries, yearFilter])
+  }, [payments, expenses, salaries, yearFilter, isFounder])
   
   const expenseCategories = useMemo(() => {
     const map = new Map<string, number>()
@@ -101,18 +108,20 @@ export default function ReportsPage() {
       }
     })
     
-    salaries.forEach(s => {
-      if(!s.month_year) return;
-      const d = parseISO(s.month_year)
-      if (d.getFullYear().toString() === yearFilter) {
-        map.set('Salaries', (map.get('Salaries') || 0) + Number(s.amount))
-      }
-    })
+    if (!isFounder) {
+      salaries.forEach(s => {
+        if(!s.month_year) return;
+        const d = parseISO(s.month_year)
+        if (d.getFullYear().toString() === yearFilter) {
+          map.set('Salaries', (map.get('Salaries') || 0) + Number(s.amount))
+        }
+      })
+    }
     
     return Array.from(map.entries())
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
-  }, [expenses, salaries, yearFilter])
+  }, [expenses, salaries, yearFilter, isFounder])
 
   const pendingReceivables = useMemo(() => {
     return projects.map(proj => {
@@ -131,8 +140,12 @@ export default function ReportsPage() {
     <div className="p-4 md:p-8 space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Financial Reports</h1>
-          <p className="text-muted-foreground mt-1">Generate and export comprehensive financial summaries.</p>
+          <div className="flex items-center gap-2">
+            <h1 className="text-3xl font-bold tracking-tight">Financial Reports</h1>
+          </div>
+          <p className="text-muted-foreground mt-1">
+            Generate and export comprehensive financial summaries.
+          </p>
         </div>
         
         <div className="flex gap-2">

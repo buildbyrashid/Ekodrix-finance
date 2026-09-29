@@ -14,8 +14,10 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import Image from 'next/image'
 import { createBrowserClient } from '@supabase/ssr'
+import { useAuth } from '@/lib/auth-context'
 
 export default function ExpensesPage() {
+  const { isAdmin, isFounder } = useAuth()
   const [expenses, setExpenses] = useState<any[]>([])
   const [projects, setProjects] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -51,6 +53,7 @@ export default function ExpensesPage() {
 
   const handleAddExpense = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    if (isFounder) return
     const formData = new FormData(e.currentTarget)
     
     let category = formData.get('category') as string
@@ -83,6 +86,7 @@ export default function ExpensesPage() {
   }
 
   const handleDeleteExpense = async (id: string) => {
+    if (isFounder) return
     if (!confirm('Are you sure you want to delete this expense?')) return
 
     const { error } = await supabase
@@ -106,10 +110,11 @@ export default function ExpensesPage() {
           <p className="text-muted-foreground mt-1">Track company spending across various categories.</p>
         </div>
         
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger render={<Button variant="destructive" className="bg-destructive hover:bg-destructive/90" />}>
-            <Plus className="mr-2 h-4 w-4" /> Add Expense
-          </DialogTrigger>
+        {isAdmin && (
+          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger render={<Button variant="destructive" className="bg-destructive hover:bg-destructive/90" />}>
+              <Plus className="mr-2 h-4 w-4" /> Add Expense
+            </DialogTrigger>
           <DialogContent className="sm:max-w-[425px]">
             <DialogHeader>
               <DialogTitle>Record Expense</DialogTitle>
@@ -210,6 +215,7 @@ export default function ExpensesPage() {
             </form>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       <div className="flex items-center gap-2">
@@ -273,19 +279,21 @@ export default function ExpensesPage() {
                     -₹{Number(expense.amount).toLocaleString()}
                   </TableCell>
                   <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger render={<Button variant="ghost" className="h-8 w-8 p-0" />}>
-                        <span className="sr-only">Open menu</span>
-                        <MoreHorizontal className="h-4 w-4" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                        <DropdownMenuItem>Edit Expense</DropdownMenuItem>
-                        <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteExpense(expense.id)}>
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    {isAdmin && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger render={<Button variant="ghost" className="h-8 w-8 p-0" />}>
+                          <span className="sr-only">Open menu</span>
+                          <MoreHorizontal className="h-4 w-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                          <DropdownMenuItem>Edit Expense</DropdownMenuItem>
+                          <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteExpense(expense.id)}>
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

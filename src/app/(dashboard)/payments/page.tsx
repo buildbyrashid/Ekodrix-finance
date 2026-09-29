@@ -15,9 +15,11 @@ import { toast } from 'sonner'
 import Image from 'next/image'
 import { createBrowserClient } from '@supabase/ssr'
 import { useRouter } from 'next/navigation'
+import { useAuth } from '@/lib/auth-context'
 
 export default function PaymentsPage() {
   const router = useRouter()
+  const { isAdmin, isFounder } = useAuth()
   const [payments, setPayments] = useState<any[]>([])
   const [projects, setProjects] = useState<any[]>([])
   const [invoices, setInvoices] = useState<any[]>([])
@@ -69,7 +71,7 @@ export default function PaymentsPage() {
   const [isDeleting, setIsDeleting] = useState(false)
 
   const handleConfirmDeletePayment = async () => {
-    if (!paymentToDelete) return
+    if (isFounder || !paymentToDelete) return
     setIsDeleting(true)
     try {
       const { error } = await supabase
@@ -102,6 +104,7 @@ export default function PaymentsPage() {
 
   const handleAddPayment = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    if (isFounder) return
     const formData = new FormData(e.currentTarget)
     
     const invoiceIdVal = formData.get('invoice_id') as string
@@ -139,10 +142,11 @@ export default function PaymentsPage() {
           <p className="text-muted-foreground mt-1">Record and track payments received from clients.</p>
         </div>
         
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger render={<Button />}>
-            <Plus className="mr-2 h-4 w-4" /> Record Payment
-          </DialogTrigger>
+        {isAdmin && (
+          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger render={<Button />}>
+              <Plus className="mr-2 h-4 w-4" /> Record Payment
+            </DialogTrigger>
           <DialogContent className="sm:max-w-[425px]">
             <DialogHeader>
               <DialogTitle>Record New Payment</DialogTitle>
@@ -222,6 +226,7 @@ export default function PaymentsPage() {
             </form>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       <div className="flex items-center space-x-2">
@@ -305,16 +310,18 @@ export default function PaymentsPage() {
                           <DropdownMenuItem onClick={() => router.push(`/receipts/payment/${payment.id}`)}>
                             <Printer className="mr-2 h-4 w-4" /> View / Print Receipt
                           </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="text-destructive focus:text-destructive cursor-pointer"
-                            onClick={() => {
-                              setPaymentToDelete(payment)
-                              setIsDeleteDialogOpen(true)
-                            }}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
-                          </DropdownMenuItem>
+                          {isAdmin && (
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive cursor-pointer"
+                              onClick={() => {
+                                setPaymentToDelete(payment)
+                                setIsDeleteDialogOpen(true)
+                              }}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>

@@ -15,10 +15,12 @@ import { Badge } from '@/components/ui/badge'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { toast } from 'sonner'
 import { createBrowserClient } from '@supabase/ssr'
+import { useAuth } from '@/lib/auth-context'
 
 export default function ProjectDetailsPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
+  const { isAdmin, isFounder } = useAuth()
   
   const [project, setProject] = useState<any>(null)
   const [invoices, setInvoices] = useState<any[]>([])
@@ -370,22 +372,24 @@ export default function ProjectDetailsPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            className="cursor-pointer"
-            onClick={() => setIsEditDialogOpen(true)}
-          >
-            <Pencil className="mr-2 h-4 w-4" /> Edit Project
-          </Button>
-          <Button
-            variant="destructive"
-            className="cursor-pointer"
-            onClick={() => setIsDeleteDialogOpen(true)}
-          >
-            <Trash2 className="mr-2 h-4 w-4" /> Delete Project
-          </Button>
-        </div>
+        {isAdmin && (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              className="cursor-pointer"
+              onClick={() => setIsEditDialogOpen(true)}
+            >
+              <Pencil className="mr-2 h-4 w-4" /> Edit Project
+            </Button>
+            <Button
+              variant="destructive"
+              className="cursor-pointer"
+              onClick={() => setIsDeleteDialogOpen(true)}
+            >
+              <Trash2 className="mr-2 h-4 w-4" /> Delete Project
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Financial Overview */}
@@ -445,10 +449,11 @@ export default function ProjectDetailsPage() {
               <FileText className="h-5 w-5 text-primary" /> Project Invoices
             </CardTitle>
           </div>
-               <Dialog open={isInvoiceDialogOpen} onOpenChange={setIsInvoiceDialogOpen}>
-            <DialogTrigger render={<Button size="sm" variant="outline" className="cursor-pointer" />}>
-              <Plus className="mr-2 h-4 w-4" /> Create Invoice
-            </DialogTrigger>
+          {isAdmin && (
+            <Dialog open={isInvoiceDialogOpen} onOpenChange={setIsInvoiceDialogOpen}>
+              <DialogTrigger render={<Button size="sm" variant="outline" className="cursor-pointer" />}>
+                <Plus className="mr-2 h-4 w-4" /> Create Invoice
+              </DialogTrigger>
             <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Create Invoice for {project.name}</DialogTitle>
@@ -543,6 +548,7 @@ export default function ProjectDetailsPage() {
               </form>
             </DialogContent>
           </Dialog>
+        )}
         </CardHeader>
         <CardContent className="p-0">
           {processedInvoices.length === 0 ? (
@@ -583,32 +589,36 @@ export default function ProjectDetailsPage() {
                           <DropdownMenuItem onClick={() => router.push(`/invoices/${inv.id}`)}>
                             <Eye className="mr-2 h-4 w-4" /> View / Print
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => {
-                            setEditingInvoice(inv)
-                            let items = []
-                            try {
-                              if (inv.description && inv.description.startsWith('[')) {
-                                items = JSON.parse(inv.description)
-                              } else if (inv.description) {
-                                items = [{ description: inv.description, amount: Number(inv.amount) || 0 }]
-                              }
-                            } catch {
-                              items = [{ description: inv.description || 'Services', amount: Number(inv.amount) || 0 }]
-                            }
-                            setEditInvoiceItems(items.length > 0 ? items : [{ description: 'Services', amount: Number(inv.amount) || 0 }])
-                            setIsEditInvoiceDialogOpen(true)
-                          }}>
-                            <Pencil className="mr-2 h-4 w-4" /> Edit Invoice
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="text-destructive focus:text-destructive cursor-pointer"
-                            onClick={() => {
-                              setDeletingInvoice(inv)
-                              setIsDeleteInvoiceDialogOpen(true)
-                            }}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" /> Delete Invoice
-                          </DropdownMenuItem>
+                          {isAdmin && (
+                            <>
+                              <DropdownMenuItem onClick={() => {
+                                setEditingInvoice(inv)
+                                let items = []
+                                try {
+                                  if (inv.description && inv.description.startsWith('[')) {
+                                    items = JSON.parse(inv.description)
+                                  } else if (inv.description) {
+                                    items = [{ description: inv.description, amount: Number(inv.amount) || 0 }]
+                                  }
+                                } catch {
+                                  items = [{ description: inv.description || 'Services', amount: Number(inv.amount) || 0 }]
+                                }
+                                setEditInvoiceItems(items.length > 0 ? items : [{ description: 'Services', amount: Number(inv.amount) || 0 }])
+                                setIsEditInvoiceDialogOpen(true)
+                              }}>
+                                <Pencil className="mr-2 h-4 w-4" /> Edit Invoice
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive cursor-pointer"
+                                onClick={() => {
+                                  setDeletingInvoice(inv)
+                                  setIsDeleteInvoiceDialogOpen(true)
+                                }}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" /> Delete Invoice
+                              </DropdownMenuItem>
+                            </>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -626,73 +636,75 @@ export default function ProjectDetailsPage() {
         <Card className="flex flex-col h-full">
           <CardHeader className="flex flex-row items-center justify-between py-4 border-b">
             <CardTitle className="text-lg">Payments Ledger</CardTitle>
-            <Dialog open={isPaymentDialogOpen} onOpenChange={setIsPaymentDialogOpen}>
-              <DialogTrigger render={<Button size="sm" variant="outline" className="cursor-pointer" />}>
-                <Plus className="mr-2 h-4 w-4" /> Add Payment
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-[425px]">
-                <DialogHeader>
-                  <DialogTitle>Record Payment</DialogTitle>
-                  <DialogDescription>Add a payment received for {project.name}.</DialogDescription>
-                </DialogHeader>
-                <form onSubmit={handleAddPayment}>
-                  <div className="grid gap-4 py-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="grid gap-2">
-                        <Label htmlFor="amount">Amount (₹)</Label>
-                        <Input id="amount" name="amount" type="number" required placeholder="5000" />
+            {isAdmin && (
+              <Dialog open={isPaymentDialogOpen} onOpenChange={setIsPaymentDialogOpen}>
+                <DialogTrigger render={<Button size="sm" variant="outline" className="cursor-pointer" />}>
+                  <Plus className="mr-2 h-4 w-4" /> Add Payment
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[425px]">
+                  <DialogHeader>
+                    <DialogTitle>Record Payment</DialogTitle>
+                    <DialogDescription>Add a payment received for {project.name}.</DialogDescription>
+                  </DialogHeader>
+                  <form onSubmit={handleAddPayment}>
+                    <div className="grid gap-4 py-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="grid gap-2">
+                          <Label htmlFor="amount">Amount (₹)</Label>
+                          <Input id="amount" name="amount" type="number" required placeholder="5000" />
+                        </div>
+                        <div className="grid gap-2">
+                          <Label htmlFor="date">Payment Date</Label>
+                          <Input id="date" name="date" type="date" required defaultValue={new Date().toISOString().split('T')[0]} />
+                        </div>
                       </div>
+
                       <div className="grid gap-2">
-                        <Label htmlFor="date">Payment Date</Label>
-                        <Input id="date" name="date" type="date" required defaultValue={new Date().toISOString().split('T')[0]} />
+                        <Label htmlFor="method">Payment Method</Label>
+                        <Select name="method" required defaultValue="Bank Transfer">
+                          <SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                            <SelectItem value="UPI">UPI</SelectItem>
+                            <SelectItem value="Card">Card</SelectItem>
+                            <SelectItem value="Cash">Cash</SelectItem>
+                            <SelectItem value="Other">Other</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label htmlFor="invoice_id">Associated Invoice (Optional)</Label>
+                        <Select name="invoice_id" defaultValue="none">
+                          <SelectTrigger><SelectValue placeholder="No Invoice" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">No Invoice</SelectItem>
+                            {unpaidInvoices.map(inv => (
+                              <SelectItem key={inv.id} value={inv.id}>
+                                {inv.invoice_number} (₹{inv.balance.toLocaleString()} due)
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label htmlFor="transaction_reference">Transaction Ref / UTR (Optional)</Label>
+                        <Input id="transaction_reference" name="transaction_reference" placeholder="e.g. UTR12345678" />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label htmlFor="notes">Notes (Optional)</Label>
+                        <Textarea id="notes" name="notes" placeholder="Optional details..." />
                       </div>
                     </div>
-
-                    <div className="grid gap-2">
-                      <Label htmlFor="method">Payment Method</Label>
-                      <Select name="method" required defaultValue="Bank Transfer">
-                        <SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
-                          <SelectItem value="UPI">UPI</SelectItem>
-                          <SelectItem value="Card">Card</SelectItem>
-                          <SelectItem value="Cash">Cash</SelectItem>
-                          <SelectItem value="Other">Other</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="grid gap-2">
-                      <Label htmlFor="invoice_id">Associated Invoice (Optional)</Label>
-                      <Select name="invoice_id" defaultValue="none">
-                        <SelectTrigger><SelectValue placeholder="No Invoice" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">No Invoice</SelectItem>
-                          {unpaidInvoices.map(inv => (
-                            <SelectItem key={inv.id} value={inv.id}>
-                              {inv.invoice_number} (₹{inv.balance.toLocaleString()} due)
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="grid gap-2">
-                      <Label htmlFor="transaction_reference">Transaction Ref / UTR (Optional)</Label>
-                      <Input id="transaction_reference" name="transaction_reference" placeholder="e.g. UTR12345678" />
-                    </div>
-
-                    <div className="grid gap-2">
-                      <Label htmlFor="notes">Notes (Optional)</Label>
-                      <Textarea id="notes" name="notes" placeholder="Optional details..." />
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button type="submit">Save Payment</Button>
-                  </DialogFooter>
-                </form>
-              </DialogContent>
-            </Dialog>
+                    <DialogFooter>
+                      <Button type="submit">Save Payment</Button>
+                    </DialogFooter>
+                  </form>
+                </DialogContent>
+              </Dialog>
+            )}
           </CardHeader>
           <CardContent className="p-0 flex-1">
             {payments.length === 0 ? (
@@ -743,10 +755,11 @@ export default function ProjectDetailsPage() {
         <Card className="flex flex-col h-full">
           <CardHeader className="flex flex-row items-center justify-between py-4 border-b">
             <CardTitle className="text-lg">Expenses Ledger</CardTitle>
-            <Dialog open={isExpenseDialogOpen} onOpenChange={setIsExpenseDialogOpen}>
-              <DialogTrigger render={<Button size="sm" variant="outline" className="text-destructive hover:bg-destructive/10 hover:text-destructive cursor-pointer" />}>
-                <Plus className="mr-2 h-4 w-4" /> Add Expense
-              </DialogTrigger>
+            {isAdmin && (
+              <Dialog open={isExpenseDialogOpen} onOpenChange={setIsExpenseDialogOpen}>
+                <DialogTrigger render={<Button size="sm" variant="outline" className="text-destructive hover:bg-destructive/10 hover:text-destructive cursor-pointer" />}>
+                  <Plus className="mr-2 h-4 w-4" /> Add Expense
+                </DialogTrigger>
               <DialogContent className="sm:max-w-[425px]">
                 <DialogHeader>
                   <DialogTitle>Add Expense</DialogTitle>
@@ -789,6 +802,7 @@ export default function ProjectDetailsPage() {
                 </form>
               </DialogContent>
             </Dialog>
+            )}
           </CardHeader>
           <CardContent className="p-0 flex-1">
             {expenses.length === 0 ? (

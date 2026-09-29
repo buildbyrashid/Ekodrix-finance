@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, Search, MoreHorizontal, FileText, ArrowUpDown, ArrowUp, ArrowDown, Trash2, Loader2, AlertTriangle } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, FileText, ArrowUpDown, ArrowUp, ArrowDown, Trash2, Loader2, AlertTriangle, Eye } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -14,9 +14,11 @@ import { toast } from 'sonner'
 import Image from 'next/image'
 import { createBrowserClient } from '@supabase/ssr'
 import { useRouter } from 'next/navigation'
+import { useAuth } from '@/lib/auth-context'
 
 export default function ProjectsPage() {
   const router = useRouter()
+  const { isAdmin, isFounder } = useAuth()
   const [projects, setProjects] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
   const [expenses, setExpenses] = useState<any[]>([])
@@ -53,7 +55,7 @@ export default function ProjectsPage() {
   const [isDeleting, setIsDeleting] = useState(false)
 
   const handleConfirmDelete = async () => {
-    if (!projectToDelete) return
+    if (isFounder || !projectToDelete) return
     setIsDeleting(true)
     try {
       // 1. Delete associated payments
@@ -187,6 +189,7 @@ export default function ProjectsPage() {
 
   const handleAddProject = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    if (isFounder) return
     const formData = new FormData(e.currentTarget)
 
     const newProject = {
@@ -230,46 +233,48 @@ export default function ProjectsPage() {
           <p className="text-muted-foreground mt-1">Track ongoing work, project values, and payment statuses.</p>
         </div>
 
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger render={<Button />}>
-            <Plus className="mr-2 h-4 w-4" /> New Project
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-[425px]">
-            <DialogHeader>
-              <DialogTitle>Create New Project</DialogTitle>
-              <DialogDescription>
-                Set up a new project and assign it to a client.
-              </DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleAddProject}>
-              <div className="grid gap-4 py-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="name">Project Name</Label>
-                  <Input id="name" name="name" required placeholder="e.g. Website Redesign" />
+        {isAdmin && (
+          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger render={<Button />}>
+              <Plus className="mr-2 h-4 w-4" /> New Project
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[425px]">
+              <DialogHeader>
+                <DialogTitle>Create New Project</DialogTitle>
+                <DialogDescription>
+                  Set up a new project and assign it to a client.
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleAddProject}>
+                <div className="grid gap-4 py-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="name">Project Name</Label>
+                    <Input id="name" name="name" required placeholder="e.g. Website Redesign" />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="client_name">Client Name</Label>
+                    <Input id="client_name" name="client_name" required placeholder="e.g. Afnan Teex Clothing" />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="project_type">Project Type</Label>
+                    <Input id="project_type" name="project_type" placeholder="e.g. E-Commerce Development" />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="total_value">Total Value (₹)</Label>
+                    <Input id="total_value" name="total_value" type="number" required placeholder="60000" />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="due_date">Due Date</Label>
+                    <Input id="due_date" name="due_date" type="date" required />
+                  </div>
                 </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="client_name">Client Name</Label>
-                  <Input id="client_name" name="client_name" required placeholder="e.g. Afnan Teex Clothing" />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="project_type">Project Type</Label>
-                  <Input id="project_type" name="project_type" placeholder="e.g. E-Commerce Development" />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="total_value">Total Value (₹)</Label>
-                  <Input id="total_value" name="total_value" type="number" required placeholder="60000" />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="due_date">Due Date</Label>
-                  <Input id="due_date" name="due_date" type="date" required />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button type="submit">Create Project</Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+                <DialogFooter>
+                  <Button type="submit">Create Project</Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
 
       <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
@@ -308,9 +313,11 @@ export default function ProjectsPage() {
           </div>
           <h3 className="text-xl font-semibold">No projects yet</h3>
           <p className="text-muted-foreground mt-2 max-w-sm">Create your first project to start tracking work and payments.</p>
-          <Button className="mt-6" onClick={() => setIsDialogOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" /> Create Project
-          </Button>
+          {isAdmin && (
+            <Button className="mt-6" onClick={() => setIsDialogOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" /> Create Project
+            </Button>
+          )}
         </div>
       ) : (
         <div className="border rounded-lg bg-card text-card-foreground shadow-sm overflow-hidden">
@@ -372,18 +379,24 @@ export default function ProjectsPage() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                            <DropdownMenuItem onClick={() => router.push(`/projects/${project.id}`)}>View Details</DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => router.push(`/projects/${project.id}`)}>Record Payment</DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="text-destructive focus:text-destructive cursor-pointer"
-                              onClick={() => {
-                                setProjectToDelete(project)
-                                setIsDeleteDialogOpen(true)
-                              }}
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Delete Project
+                            <DropdownMenuItem onClick={() => router.push(`/projects/${project.id}`)}>
+                              <Eye className="mr-2 h-4 w-4" /> View Details
                             </DropdownMenuItem>
+                            {isAdmin && (
+                              <>
+                                <DropdownMenuItem onClick={() => router.push(`/projects/${project.id}`)}>Record Payment</DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive cursor-pointer"
+                                  onClick={() => {
+                                    setProjectToDelete(project)
+                                    setIsDeleteDialogOpen(true)
+                                  }}
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                  Delete Project
+                                </DropdownMenuItem>
+                              </>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>

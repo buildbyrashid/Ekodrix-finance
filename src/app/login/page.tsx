@@ -23,7 +23,6 @@ export default function LoginPage() {
       })
       setIsLoading(false)
     }
-    // If successful, the action will redirect
   }
 
   return (
@@ -32,18 +31,18 @@ export default function LoginPage() {
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-primary/20 blur-[120px] rounded-full pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-accent/20 blur-[120px] rounded-full pointer-events-none" />
 
-      <div className="z-10 w-full max-w-md space-y-8">
-        <div className="flex flex-col items-center space-y-4">
+      <div className="z-10 w-full max-w-md space-y-6">
+        <div className="flex flex-col items-center space-y-3">
           <div className="h-16 w-16 relative bg-white/10 p-2 rounded-2xl shadow-xl border border-white/20 backdrop-blur-md">
-             <Image src="/logo.png" alt="Ekodrix Finance" fill className="object-contain p-2" />
+             <Image src="/logo.png" alt="Ekodrix Finance" fill className="object-contain p-2" priority />
           </div>
           <div className="text-center">
             <h1 className="text-3xl font-bold tracking-tight text-foreground">Ekodrix Finance</h1>
-            <p className="text-sm text-muted-foreground mt-1">Founders Dashboard</p>
+            <p className="text-sm text-muted-foreground mt-1">Finance & Accounts Management</p>
           </div>
         </div>
 
-        <Card className="border-border/50 shadow-2xl backdrop-blur-xl bg-card/80">
+        <Card className="border-border/50 shadow-2xl backdrop-blur-xl bg-card/85">
           <CardHeader>
             <CardTitle>Welcome back</CardTitle>
             <CardDescription>
@@ -77,7 +76,7 @@ export default function LoginPage() {
                 />
               </div>
             </CardContent>
-            <CardFooter>
+            <CardFooter className="pt-2">
               <Button type="submit" className="w-full" disabled={isLoading}>
                 {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Sign in

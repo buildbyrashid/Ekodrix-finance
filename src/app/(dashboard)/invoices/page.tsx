@@ -14,9 +14,11 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import { createBrowserClient } from '@supabase/ssr'
 import { useRouter } from 'next/navigation'
+import { useAuth } from '@/lib/auth-context'
 
 export default function InvoicesPage() {
   const router = useRouter()
+  const { isAdmin, isFounder } = useAuth()
   const [invoices, setInvoices] = useState<any[]>([])
   const [projects, setProjects] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
@@ -79,6 +81,7 @@ export default function InvoicesPage() {
 
   const handleCreateInvoice = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    if (isFounder) return
     const formData = new FormData(e.currentTarget)
 
     const projId = formData.get('project_id') as string
@@ -127,7 +130,7 @@ export default function InvoicesPage() {
 
   const handleEditInvoice = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (!editingInvoice) return
+    if (isFounder || !editingInvoice) return
     setIsSavingEdit(true)
     const formData = new FormData(e.currentTarget)
 
@@ -160,7 +163,7 @@ export default function InvoicesPage() {
   }
 
   const handleDeleteInvoice = async () => {
-    if (!deletingInvoice) return
+    if (isFounder || !deletingInvoice) return
     setIsDeleting(true)
 
     const { error } = await supabase
@@ -230,10 +233,11 @@ export default function InvoicesPage() {
           <p className="text-muted-foreground mt-1">Create and manage bills sent to clients.</p>
         </div>
 
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger render={<Button />}>
-            <Plus className="mr-2 h-4 w-4" /> Create Invoice
-          </DialogTrigger>
+        {isAdmin && (
+          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger render={<Button />}>
+              <Plus className="mr-2 h-4 w-4" /> Create Invoice
+            </DialogTrigger>
           <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Create New Invoice</DialogTitle>
@@ -342,6 +346,7 @@ export default function InvoicesPage() {
             </form>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       {/* Filters */}
@@ -377,9 +382,11 @@ export default function InvoicesPage() {
           <FileText className="h-12 w-12 text-muted-foreground/40 mb-3" />
           <h3 className="text-xl font-semibold">No invoices generated yet</h3>
           <p className="text-muted-foreground mt-1 max-w-sm text-sm">Create your first invoice whenever you request a payment from a client.</p>
-          <Button className="mt-6" onClick={() => setIsDialogOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" /> Create Invoice
-          </Button>
+          {isAdmin && (
+            <Button className="mt-6" onClick={() => setIsDialogOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" /> Create Invoice
+            </Button>
+          )}
         </div>
       ) : (
         <div className="border rounded-lg bg-card text-card-foreground shadow-sm overflow-hidden">
@@ -424,35 +431,39 @@ export default function InvoicesPage() {
                           <DropdownMenuItem onClick={() => router.push(`/invoices/${inv.id}`)}>
                             <Eye className="mr-2 h-4 w-4" /> View / Print Invoice
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => {
-                            setEditingInvoice(inv)
-                            let items = []
-                            try {
-                              if (inv.description && inv.description.startsWith('[')) {
-                                items = JSON.parse(inv.description)
-                              } else if (inv.description) {
-                                items = [{ description: inv.description, amount: Number(inv.amount) || 0 }]
-                              }
-                            } catch {
-                              items = [{ description: inv.description || 'Services', amount: Number(inv.amount) || 0 }]
-                            }
-                            setEditItems(items.length > 0 ? items : [{ description: 'Services', amount: Number(inv.amount) || 0 }])
-                            setIsEditDialogOpen(true)
-                          }}>
-                            <Pencil className="mr-2 h-4 w-4" /> Edit Invoice
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => router.push(`/projects/${inv.project_id}`)}>
-                            Record Payment
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="text-destructive focus:text-destructive cursor-pointer"
-                            onClick={() => {
-                              setDeletingInvoice(inv)
-                              setIsDeleteDialogOpen(true)
-                            }}
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" /> Delete Invoice
-                          </DropdownMenuItem>
+                          {isAdmin && (
+                            <>
+                              <DropdownMenuItem onClick={() => {
+                                setEditingInvoice(inv)
+                                let items = []
+                                try {
+                                  if (inv.description && inv.description.startsWith('[')) {
+                                    items = JSON.parse(inv.description)
+                                  } else if (inv.description) {
+                                    items = [{ description: inv.description, amount: Number(inv.amount) || 0 }]
+                                  }
+                                } catch {
+                                  items = [{ description: inv.description || 'Services', amount: Number(inv.amount) || 0 }]
+                                }
+                                setEditItems(items.length > 0 ? items : [{ description: 'Services', amount: Number(inv.amount) || 0 }])
+                                setIsEditDialogOpen(true)
+                              }}>
+                                <Pencil className="mr-2 h-4 w-4" /> Edit Invoice
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => router.push(`/projects/${inv.project_id}`)}>
+                                Record Payment
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive cursor-pointer"
+                                onClick={() => {
+                                  setDeletingInvoice(inv)
+                                  setIsDeleteDialogOpen(true)
+                                }}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" /> Delete Invoice
+                              </DropdownMenuItem>
+                            </>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>

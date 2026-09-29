@@ -1,18 +1,21 @@
 'use client'
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Banknote, CreditCard, Receipt, Wallet, TrendingUp, TrendingDown, FolderKanban, Loader2 } from 'lucide-react'
+import { Banknote, CreditCard, Receipt, Wallet, TrendingUp, TrendingDown, FolderKanban, Loader2, Eye } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useEffect, useState, useMemo } from 'react'
 import { createBrowserClient } from '@supabase/ssr'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
 import { format, startOfWeek, startOfMonth, startOfYear, parseISO } from 'date-fns'
+import { useAuth } from '@/lib/auth-context'
 
 type Timeframe = 'week' | 'month' | 'year' | 'all'
 
 export default function DashboardPage() {
   const [mounted, setMounted] = useState(false)
   const [timeframe, setTimeframe] = useState<Timeframe>('all')
+  const { isFounder, loading: authLoading } = useAuth()
   
   const [projects, setProjects] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
@@ -27,11 +30,14 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setMounted(true)
-    fetchDashboardData()
-  }, [])
+    if (!authLoading) {
+      fetchDashboardData()
+    }
+  }, [authLoading, isFounder])
 
   const fetchDashboardData = async () => {
     setLoading(true)
+    
     const [projRes, payRes, expRes, salRes] = await Promise.all([
       supabase.from('projects').select('*'),
       supabase.from('payments').select('*, projects(name)'),
@@ -75,7 +81,10 @@ export default function DashboardPage() {
     return sum + (projPending > 0 ? projPending : 0)
   }, 0)
   
-  const totalExpenses = filteredExpenses.reduce((sum, e) => sum + Number(e.amount), 0) + filteredSalaries.reduce((sum, s) => sum + Number(s.amount), 0)
+  // Total expenses: full business expenses
+  const totalExpenses = filteredExpenses.reduce((sum, e) => sum + Number(e.amount), 0) + 
+    filteredSalaries.reduce((sum, s) => sum + Number(s.amount), 0)
+    
   const currentBalance = received - totalExpenses
 
   const chartData = useMemo(() => {
@@ -112,12 +121,12 @@ export default function DashboardPage() {
         time: new Date(e.created_at),
         type: 'expense'
       })),
-      ...salaries.map(s => ({
+      ...(!isFounder ? salaries.map(s => ({
         label: `Salary: ${s.employee_name}`,
         amount: `-₹${Number(s.amount).toLocaleString()}`,
         time: new Date(s.created_at),
         type: 'expense'
-      })),
+      })) : []),
       ...projects.map(p => ({
         label: `New Project: ${p.name}`,
         amount: `₹${Number(p.total_value).toLocaleString()}`,
@@ -129,12 +138,19 @@ export default function DashboardPage() {
       ...a,
       timeStr: format(a.time, 'MMM d, yyyy h:mm a')
     }))
-  }, [payments, expenses, salaries, projects])
+  }, [payments, expenses, salaries, projects, isFounder])
 
   return (
     <div className="p-4 md:p-8 space-y-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <h1 className="text-3xl font-bold tracking-tight">Overview</h1>
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <h1 className="text-3xl font-bold tracking-tight">Overview</h1>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Financial overview and cashflow analytics
+          </p>
+        </div>
         <div className="w-48">
           <Select value={timeframe} onValueChange={(val) => val && setTimeframe(val as Timeframe)}>
             <SelectTrigger>
@@ -190,7 +206,9 @@ export default function DashboardPage() {
             </Card>
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium">Expenses</CardTitle>
+                <CardTitle className="text-sm font-medium">
+                  Expenses
+                </CardTitle>
                 <Receipt className="h-4 w-4 text-destructive" />
               </CardHeader>
               <CardContent>

@@ -11,9 +11,11 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { toast } from 'sonner'
 import { createBrowserClient } from '@supabase/ssr'
+import { useAuth } from '@/lib/auth-context'
 
 // Dummy Data
 export default function ClientsPage() {
+  const { isAdmin, isFounder } = useAuth()
   const [clients, setClients] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -50,6 +52,7 @@ export default function ClientsPage() {
 
   const handleAddClient = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    if (isFounder) return
     const formData = new FormData(e.currentTarget)
     
     const newClient = {
@@ -81,10 +84,11 @@ export default function ClientsPage() {
           <p className="text-muted-foreground mt-1">Manage your company's clients and their contact information.</p>
         </div>
         
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger render={<Button />}>
-            <Plus className="mr-2 h-4 w-4" /> Add Client
-          </DialogTrigger>
+        {isAdmin && (
+          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger render={<Button />}>
+              <Plus className="mr-2 h-4 w-4" /> Add Client
+            </DialogTrigger>
           <DialogContent className="sm:max-w-[425px]">
             <DialogHeader>
               <DialogTitle>Add New Client</DialogTitle>
@@ -117,6 +121,7 @@ export default function ClientsPage() {
             </form>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       <div className="flex items-center space-x-2">
@@ -168,20 +173,22 @@ export default function ClientsPage() {
                   <TableCell className="hidden md:table-cell">{client.email}</TableCell>
                   <TableCell className="hidden md:table-cell">{client.phone}</TableCell>
                   <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger render={<Button variant="ghost" className="h-8 w-8 p-0" />}>
-                        <span className="sr-only">Open menu</span>
-                        <MoreHorizontal className="h-4 w-4" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                        <DropdownMenuItem onClick={() => navigator.clipboard.writeText(client.email)}>
-                          Copy Email
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>View Projects</DropdownMenuItem>
-                        <DropdownMenuItem className="text-destructive">Delete Client</DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    {isAdmin && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger render={<Button variant="ghost" className="h-8 w-8 p-0" />}>
+                          <span className="sr-only">Open menu</span>
+                          <MoreHorizontal className="h-4 w-4" />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                          <DropdownMenuItem onClick={() => navigator.clipboard.writeText(client.email)}>
+                            Copy Email
+                          </DropdownMenuItem>
+                          <DropdownMenuItem>View Projects</DropdownMenuItem>
+                          <DropdownMenuItem className="text-destructive">Delete Client</DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
                   </TableCell>
                 </TableRow>
               ))

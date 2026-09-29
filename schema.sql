@@ -182,36 +182,36 @@ CREATE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
 
--- ==========================================
--- Admin Seeding (admin@ekodrix.com)
--- ==========================================
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+    -- ==========================================
+    -- Admin Seeding (admin@ekodrix.com)
+    -- ==========================================
+    CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
-INSERT INTO auth.users (
-  instance_id,
-  id,
-  aud,
-  role,
-  email,
-  encrypted_password,
-  email_confirmed_at,
-  raw_app_meta_data,
-  raw_user_meta_data,
-  created_at,
-  updated_at
-) VALUES (
-  '00000000-0000-0000-0000-000000000000',
-  uuid_generate_v4(),
-  'authenticated',
-  'authenticated',
-  'admin@ekodrix.com',
-  crypt('Ekodrix@2026!', gen_salt('bf')),
-  now(),
-  '{"provider": "email", "providers": ["email"]}',
-  '{"full_name": "Ekodrix Admin"}',
-  now(),
-  now()
-);
+    INSERT INTO auth.users (
+    instance_id,
+    id,
+    aud,
+    role,
+    email,
+    encrypted_password,
+    email_confirmed_at,
+    raw_app_meta_data,
+    raw_user_meta_data,
+    created_at,
+    updated_at
+    ) VALUES (
+    '00000000-0000-0000-0000-000000000000',
+    uuid_generate_v4(),
+    'authenticated',
+    'authenticated',
+    'admin@ekodrix.com',
+    crypt('Ekodrix@2026!', gen_salt('bf')),
+    now(),
+    '{"provider": "email", "providers": ["email"]}',
+    '{"full_name": "Ekodrix Admin"}',
+    now(),
+    now()
+    );
 
--- Update the auto-created profile to have admin role
-UPDATE public.profiles SET role = 'admin' WHERE email = 'admin@ekodrix.com';
+    -- Update the auto-created profile to have admin role
+    UPDATE public.profiles SET role = 'admin' WHERE email = 'admin@ekodrix.com';

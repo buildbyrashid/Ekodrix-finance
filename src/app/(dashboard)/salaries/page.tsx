@@ -14,11 +14,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner'
 import Image from 'next/image'
 import { createBrowserClient } from '@supabase/ssr'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/lib/auth-context'
 
 export default function SalariesPage() {
+  const router = useRouter()
+  const { isFounder, loading: authLoading } = useAuth()
   const [salaries, setSalaries] = useState<any[]>([])
   const [employeesList, setEmployeesList] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!authLoading && isFounder) {
+      router.replace('/')
+    }
+  }, [authLoading, isFounder, router])
 
   const [formEmail, setFormEmail] = useState('')
   const [formRole, setFormRole] = useState('')
@@ -293,6 +303,16 @@ export default function SalariesPage() {
     } catch (error: any) {
       toast.error(error.message || 'An error occurred', { id: toastId })
     }
+  }
+
+  if (isFounder) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] p-8 text-center space-y-4">
+        <h2 className="text-2xl font-bold">Access Restricted</h2>
+        <p className="text-muted-foreground max-w-md">Founders view does not have permission to view salary or employee payroll data.</p>
+        <Button onClick={() => router.push('/')}>Return to Dashboard</Button>
+      </div>
+    )
   }
 
   return (
