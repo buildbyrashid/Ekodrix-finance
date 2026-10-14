@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Search, MoreHorizontal, ArrowUpRight, Filter, Loader2, Pencil } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, ArrowUpRight, Filter, Loader2, Pencil, Trash2, FolderKanban, Building, RefreshCw, TrendingDown, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
@@ -23,6 +24,7 @@ export default function ExpensesPage() {
   const [projects, setProjects] = useState<any[]>(() => getCached('projects_short') || [])
   const [loading, setLoading] = useState(() => !hasCached('expenses'))
   const [expenseType, setExpenseType] = useState<'office' | 'project'>('office')
+  const [categoryFilter, setCategoryFilter] = useState<'all' | 'project' | 'office' | 'recurring'>('all')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const submittingRef = useRef(false)
 
@@ -59,11 +61,38 @@ export default function ExpensesPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [expenseCategory, setExpenseCategory] = useState('')
 
-  const filteredExpenses = expenses.filter(e => 
-    e.category?.toLowerCase().includes(search.toLowerCase()) || 
-    e.notes?.toLowerCase().includes(search.toLowerCase()) ||
-    e.projects?.name?.toLowerCase().includes(search.toLowerCase())
-  )
+  // Executive KPI calculations
+  const totalExpenseAmount = expenses.reduce((sum, e) => sum + Number(e.amount || 0), 0)
+  const projectExpenses = expenses.filter(e => e.project_id)
+  const projectExpenseAmount = projectExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0)
+  const officeExpenses = expenses.filter(e => !e.project_id)
+  const officeExpenseAmount = officeExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0)
+  const recurringExpenses = expenses.filter(e => e.is_recurring)
+  const recurringExpenseAmount = recurringExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0)
+
+  const filterTabs = [
+    { id: 'all', label: 'All Expenses', count: expenses.length },
+    { id: 'project', label: 'Project Costs', count: projectExpenses.length },
+    { id: 'office', label: 'Office & Overhead', count: officeExpenses.length },
+    { id: 'recurring', label: 'Recurring', count: recurringExpenses.length },
+  ]
+
+  const filteredExpenses = expenses.filter(e => {
+    const matchesSearch = e.category?.toLowerCase().includes(search.toLowerCase()) || 
+      e.notes?.toLowerCase().includes(search.toLowerCase()) ||
+      e.projects?.name?.toLowerCase().includes(search.toLowerCase())
+
+    let matchesCategory = true
+    if (categoryFilter === 'project') {
+      matchesCategory = Boolean(e.project_id)
+    } else if (categoryFilter === 'office') {
+      matchesCategory = !e.project_id
+    } else if (categoryFilter === 'recurring') {
+      matchesCategory = Boolean(e.is_recurring)
+    }
+
+    return matchesSearch && matchesCategory
+  })
 
   const handleAddExpense = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -441,19 +470,106 @@ export default function ExpensesPage() {
         </Dialog>
       </div>
 
-      {/* Filters and Search */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center space-x-2 flex-1 max-w-sm">
-          <Search className="w-5 h-5 text-muted-foreground" />
+      {/* Top Executive KPI Cards */}
+      {!loading && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card className="bg-card/50 backdrop-blur border-border/60 hover:border-border transition-colors">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Expenses</CardTitle>
+              <TrendingDown className="h-4 w-4 text-destructive" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-destructive">₹{totalExpenseAmount.toLocaleString()}</div>
+              <p className="text-xs text-muted-foreground mt-1">{expenses.length} Total Records</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card/50 backdrop-blur border-border/60 hover:border-border transition-colors">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Project Costs</CardTitle>
+              <FolderKanban className="h-4 w-4 text-primary" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-primary">₹{projectExpenseAmount.toLocaleString()}</div>
+              <p className="text-xs text-muted-foreground mt-1">{projectExpenses.length} direct project costs</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card/50 backdrop-blur border-border/60 hover:border-border transition-colors">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Office & Overhead</CardTitle>
+              <Building className="h-4 w-4 text-amber-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">₹{officeExpenseAmount.toLocaleString()}</div>
+              <p className="text-xs text-muted-foreground mt-1">{officeExpenses.length} company overheads</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card/50 backdrop-blur border-border/60 hover:border-border transition-colors">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Monthly Recurring</CardTitle>
+              <RefreshCw className="h-4 w-4 text-teal-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">₹{recurringExpenseAmount.toLocaleString()}</div>
+              <p className="text-xs text-muted-foreground mt-1">{recurringExpenses.length} recurring subscriptions/rent</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Segmented Filter Pills & Search */}
+      <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between">
+        {/* Modern Filter Pills */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 lg:pb-0 scrollbar-none">
+          {filterTabs.map((tab) => {
+            const isActive = categoryFilter === tab.id
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setCategoryFilter(tab.id as any)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap cursor-pointer select-none ${
+                  isActive
+                    ? 'bg-destructive text-destructive-foreground shadow-sm'
+                    : 'bg-card hover:bg-muted/80 text-muted-foreground hover:text-foreground border border-border/60'
+                }`}
+              >
+                <span>{tab.label}</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                    isActive
+                      ? 'bg-destructive-foreground/20 text-destructive-foreground'
+                      : 'bg-muted text-muted-foreground'
+                  }`}
+                >
+                  {tab.count}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Clean Search Input with Clear Button */}
+        <div className="relative w-full lg:w-72 shrink-0">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input 
             placeholder="Search expenses..." 
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 pr-8 h-9 text-xs"
           />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5 rounded cursor-pointer"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
-        <Button variant="outline" size="sm" className="hidden sm:flex">
-          <Filter className="mr-2 h-4 w-4" /> Filter
-        </Button>
       </div>
 
       {loading ? (

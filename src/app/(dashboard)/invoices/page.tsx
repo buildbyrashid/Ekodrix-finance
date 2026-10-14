@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Plus, Search, MoreHorizontal, FileText, ArrowUpDown, ArrowUp, ArrowDown, Trash2, Loader2, AlertTriangle, Eye, Printer, Pencil } from 'lucide-react'
+import { Plus, Search, MoreHorizontal, FileText, ArrowUpDown, ArrowUp, ArrowDown, Trash2, Loader2, AlertTriangle, Eye, Printer, Pencil, Receipt, CheckCircle2, Clock, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
@@ -254,12 +255,53 @@ export default function InvoicesPage() {
     return matchesSearch && matchesStatus
   })
 
+  // Executive KPI stats
+  const totalBilled = processedInvoices.reduce((sum, inv) => sum + Number(inv.amount || 0), 0)
+  const totalPaid = processedInvoices.reduce((sum, inv) => sum + inv.paid, 0)
+  const totalOutstanding = processedInvoices.reduce((sum, inv) => sum + inv.balance, 0)
+  const collectionRate = totalBilled > 0 ? Math.round((totalPaid / totalBilled) * 100) : 0
+
+  const countUnpaid = processedInvoices.filter(i => i.derivedStatus === 'UNPAID').length
+  const countPartial = processedInvoices.filter(i => i.derivedStatus === 'PARTIALLY PAID').length
+  const countPaid = processedInvoices.filter(i => i.derivedStatus === 'PAID').length
+
+  const filterTabs = [
+    { id: 'all', label: 'All Invoices', count: processedInvoices.length },
+    { id: 'UNPAID', label: 'Unpaid', count: countUnpaid },
+    { id: 'PARTIALLY PAID', label: 'Partially Paid', count: countPartial },
+    { id: 'PAID', label: 'Paid', count: countPaid },
+  ]
+
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'PAID': return <Badge className="bg-emerald-600 hover:bg-emerald-700">PAID</Badge>
-      case 'PARTIALLY PAID': return <Badge variant="secondary" className="bg-amber-100 text-amber-800 border-amber-300">PARTIALLY PAID</Badge>
-      case 'OVERDUE': return <Badge variant="destructive">OVERDUE</Badge>
-      default: return <Badge variant="outline" className="text-gray-600">UNPAID</Badge>
+      case 'PAID':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 whitespace-nowrap">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            PAID
+          </span>
+        )
+      case 'PARTIALLY PAID':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20 whitespace-nowrap">
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+            PARTIAL
+          </span>
+        )
+      case 'OVERDUE':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-500/10 text-rose-500 border border-rose-500/20 whitespace-nowrap">
+            <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+            OVERDUE
+          </span>
+        )
+      default:
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground border border-border whitespace-nowrap">
+            <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/60" />
+            UNPAID
+          </span>
+        )
     }
   }
 
@@ -395,28 +437,108 @@ export default function InvoicesPage() {
         )}
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
-        <div className="flex items-center space-x-2 w-full sm:max-w-sm">
-          <Search className="w-5 h-5 text-muted-foreground shrink-0" />
+      {/* Top KPI Summary Cards */}
+      {!loading && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card className="bg-card/50 backdrop-blur border-border/60 hover:border-border transition-colors">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Invoiced</CardTitle>
+              <Receipt className="h-4 w-4 text-primary" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">₹{totalBilled.toLocaleString()}</div>
+              <p className="text-xs text-muted-foreground mt-1">{invoices.length} Invoices Issued</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card/50 backdrop-blur border-border/60 hover:border-border transition-colors">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Received</CardTitle>
+              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-primary">₹{totalPaid.toLocaleString()}</div>
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-xs font-medium text-emerald-500">{collectionRate}% collected</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card/50 backdrop-blur border-border/60 hover:border-border transition-colors">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Outstanding Due</CardTitle>
+              <Clock className="h-4 w-4 text-amber-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-destructive">₹{totalOutstanding.toLocaleString()}</div>
+              <p className="text-xs text-muted-foreground mt-1">{countUnpaid + countPartial} awaiting clearance</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card/50 backdrop-blur border-border/60 hover:border-border transition-colors">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Fully Paid Invoices</CardTitle>
+              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-emerald-500">{countPaid}</div>
+              <p className="text-xs text-muted-foreground mt-1">Cleared invoices</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Segmented Filter Pills & Search */}
+      <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between">
+        {/* Modern Filter Pills */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 lg:pb-0 scrollbar-none">
+          {filterTabs.map((tab) => {
+            const isActive = statusFilter === tab.id
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setStatusFilter(tab.id)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap cursor-pointer select-none ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'bg-card hover:bg-muted/80 text-muted-foreground hover:text-foreground border border-border/60'
+                }`}
+              >
+                <span>{tab.label}</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                    isActive
+                      ? 'bg-primary-foreground/20 text-primary-foreground'
+                      : 'bg-muted text-muted-foreground'
+                  }`}
+                >
+                  {tab.count}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Clean Search Input with Clear Button */}
+        <div className="relative w-full lg:w-72 shrink-0">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Search by invoice #, client or project..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full"
+            className="pl-9 pr-8 h-9 text-xs"
           />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5 rounded cursor-pointer"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
-        <Select value={statusFilter} onValueChange={(val) => setStatusFilter(val || 'all')}>
-          <SelectTrigger className="w-full sm:w-[180px]">
-            <SelectValue placeholder="All Statuses" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Statuses</SelectItem>
-            <SelectItem value="UNPAID">Unpaid</SelectItem>
-            <SelectItem value="PARTIALLY PAID">Partially Paid</SelectItem>
-            <SelectItem value="PAID">Paid</SelectItem>
-          </SelectContent>
-        </Select>
       </div>
 
       {loading ? (
@@ -450,72 +572,86 @@ export default function InvoicesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredInvoices.map((inv) => {
-                const clientName = inv.client_name || inv.projects?.client_name || inv.projects?.clients?.name || 'Client'
-                return (
-                  <TableRow key={inv.id}>
-                    <TableCell className="font-medium font-mono text-primary">{inv.invoice_number}</TableCell>
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <span className="font-medium">{clientName}</span>
-                        <span className="text-xs text-muted-foreground">{inv.projects?.name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-sm">{inv.invoice_date}</TableCell>
-                    <TableCell className="text-right font-medium">₹{Number(inv.amount).toLocaleString()}</TableCell>
-                    <TableCell className="text-right text-emerald-600 font-medium">₹{inv.paid.toLocaleString()}</TableCell>
-                    <TableCell className="text-right text-rose-600 font-medium">₹{inv.balance.toLocaleString()}</TableCell>
-                    <TableCell>{getStatusBadge(inv.derivedStatus)}</TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger render={<Button variant="ghost" className="h-8 w-8 p-0" />}>
-                          <span className="sr-only">Open menu</span>
-                          <MoreHorizontal className="h-4 w-4" />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                          <DropdownMenuItem onClick={() => router.push(`/invoices/${inv.id}`)}>
-                            <Eye className="mr-2 h-4 w-4" /> View / Print Invoice
-                          </DropdownMenuItem>
-                          {isAdmin && (
-                            <>
-                              <DropdownMenuItem onClick={() => {
-                                setEditingInvoice(inv)
-                                let items = []
-                                try {
-                                  if (inv.description && inv.description.startsWith('[')) {
-                                    items = JSON.parse(inv.description)
-                                  } else if (inv.description) {
-                                    items = [{ description: inv.description, amount: Number(inv.amount) || 0 }]
+              {filteredInvoices.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+                    No invoices match your search or filter.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                filteredInvoices.map((inv) => {
+                  const clientName = inv.client_name || inv.projects?.client_name || inv.projects?.clients?.name || 'Client'
+                  return (
+                    <TableRow 
+                      key={inv.id}
+                      className="cursor-pointer hover:bg-muted/40 transition-colors group"
+                      onClick={() => router.push(`/invoices/${inv.id}`)}
+                    >
+                      <TableCell className="font-medium font-mono text-primary group-hover:underline">
+                        {inv.invoice_number}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col">
+                          <span className="font-semibold text-sm group-hover:text-primary transition-colors">{clientName}</span>
+                          <span className="text-xs text-muted-foreground">{inv.projects?.name}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-xs whitespace-nowrap">{inv.invoice_date}</TableCell>
+                      <TableCell className="text-right font-medium">₹{Number(inv.amount).toLocaleString()}</TableCell>
+                      <TableCell className="text-right text-emerald-500 font-medium">₹{inv.paid.toLocaleString()}</TableCell>
+                      <TableCell className="text-right text-destructive font-medium">₹{inv.balance.toLocaleString()}</TableCell>
+                      <TableCell>{getStatusBadge(inv.derivedStatus)}</TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger render={<Button variant="ghost" className="h-8 w-8 p-0 cursor-pointer" />}>
+                            <span className="sr-only">Open menu</span>
+                            <MoreHorizontal className="h-4 w-4" />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                            <DropdownMenuItem onClick={() => router.push(`/invoices/${inv.id}`)} className="cursor-pointer">
+                              <Eye className="mr-2 h-4 w-4" /> View / Print Invoice
+                            </DropdownMenuItem>
+                            {isAdmin && (
+                              <>
+                                <DropdownMenuItem onClick={() => {
+                                  setEditingInvoice(inv)
+                                  let items = []
+                                  try {
+                                    if (inv.description && inv.description.startsWith('[')) {
+                                      items = JSON.parse(inv.description)
+                                    } else if (inv.description) {
+                                      items = [{ description: inv.description, amount: Number(inv.amount) || 0 }]
+                                    }
+                                  } catch {
+                                    items = [{ description: inv.description || 'Services', amount: Number(inv.amount) || 0 }]
                                   }
-                                } catch {
-                                  items = [{ description: inv.description || 'Services', amount: Number(inv.amount) || 0 }]
-                                }
-                                setEditItems(items.length > 0 ? items : [{ description: 'Services', amount: Number(inv.amount) || 0 }])
-                                setIsEditDialogOpen(true)
-                              }}>
-                                <Pencil className="mr-2 h-4 w-4" /> Edit Invoice
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => router.push(`/projects/${inv.project_id}`)}>
-                                Record Payment
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="text-destructive focus:text-destructive cursor-pointer"
-                                onClick={() => {
-                                  setDeletingInvoice(inv)
-                                  setIsDeleteDialogOpen(true)
-                                }}
-                              >
-                                <Trash2 className="mr-2 h-4 w-4" /> Delete Invoice
-                              </DropdownMenuItem>
-                            </>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
+                                  setEditItems(items.length > 0 ? items : [{ description: 'Services', amount: Number(inv.amount) || 0 }])
+                                  setIsEditDialogOpen(true)
+                                }} className="cursor-pointer">
+                                  <Pencil className="mr-2 h-4 w-4" /> Edit Invoice
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => router.push(`/projects/${inv.project_id}`)} className="cursor-pointer">
+                                  Record Payment
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive cursor-pointer"
+                                  onClick={() => {
+                                    setDeletingInvoice(inv)
+                                    setIsDeleteDialogOpen(true)
+                                  }}
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" /> Delete Invoice
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
+              )}
             </TableBody>
           </Table>
         </div>
