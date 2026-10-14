@@ -9,28 +9,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge'
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend, PieChart, Pie, Cell } from 'recharts'
 import { toast } from 'sonner'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { format, parseISO } from 'date-fns'
 import { useAuth } from '@/lib/auth-context'
+import { getCached, setCached, hasCached } from '@/lib/data-cache'
 
 const COLORS = ['var(--color-primary)', 'var(--color-chart-2)', 'var(--color-chart-3)', 'var(--color-chart-4)', 'var(--color-chart-5)']
 
 export default function ReportsPage() {
   const [mounted, setMounted] = useState(false)
-  const [loading, setLoading] = useState(true)
-  
-  const [projects, setProjects] = useState<any[]>([])
-  const [payments, setPayments] = useState<any[]>([])
-  const [expenses, setExpenses] = useState<any[]>([])
-  const [salaries, setSalaries] = useState<any[]>([])
+  const [projects, setProjects] = useState<any[]>(() => getCached('reports_projects') || [])
+  const [payments, setPayments] = useState<any[]>(() => getCached('reports_payments') || [])
+  const [expenses, setExpenses] = useState<any[]>(() => getCached('reports_expenses') || [])
+  const [salaries, setSalaries] = useState<any[]>(() => getCached('reports_salaries') || [])
+  const [loading, setLoading] = useState(() => !hasCached('reports_projects'))
   
   const [yearFilter, setYearFilter] = useState(new Date().getFullYear().toString())
   const { isFounder, loading: authLoading } = useAuth()
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  const supabase = createClient()
   
   useEffect(() => {
     setMounted(true)
@@ -40,7 +37,9 @@ export default function ReportsPage() {
   }, [authLoading, isFounder, yearFilter])
 
   const fetchData = async () => {
-    setLoading(true)
+    if (!hasCached('reports_projects')) {
+      setLoading(true)
+    }
     const [projRes, payRes, expRes, salRes] = await Promise.all([
       supabase.from('projects').select('*, clients(name)'),
       supabase.from('payments').select('*'),
@@ -48,10 +47,22 @@ export default function ReportsPage() {
       supabase.from('salaries').select('*')
     ])
     
-    if (projRes.data) setProjects(projRes.data)
-    if (payRes.data) setPayments(payRes.data)
-    if (expRes.data) setExpenses(expRes.data)
-    if (salRes.data) setSalaries(salRes.data)
+    if (projRes.data) {
+      setProjects(projRes.data)
+      setCached('reports_projects', projRes.data)
+    }
+    if (payRes.data) {
+      setPayments(payRes.data)
+      setCached('reports_payments', payRes.data)
+    }
+    if (expRes.data) {
+      setExpenses(expRes.data)
+      setCached('reports_expenses', expRes.data)
+    }
+    if (salRes.data) {
+      setSalaries(salRes.data)
+      setCached('reports_salaries', salRes.data)
+    }
     setLoading(false)
   }
 

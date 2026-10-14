@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Plus, Search, MoreHorizontal, ArrowUpRight, Filter } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Plus, Search, MoreHorizontal, ArrowUpRight, Filter, Loader2, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -13,20 +13,26 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import Image from 'next/image'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/auth-context'
+import { getCached, setCached, invalidateCache, hasCached } from '@/lib/data-cache'
 
 export default function ExpensesPage() {
   const { isAdmin, isFounder } = useAuth()
-  const [expenses, setExpenses] = useState<any[]>([])
-  const [projects, setProjects] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
+  const [expenses, setExpenses] = useState<any[]>(() => getCached('expenses') || [])
+  const [projects, setProjects] = useState<any[]>(() => getCached('projects_short') || [])
+  const [loading, setLoading] = useState(() => !hasCached('expenses'))
   const [expenseType, setExpenseType] = useState<'office' | 'project'>('office')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const submittingRef = useRef(false)
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Edit Expense State
+  const [editingExpense, setEditingExpense] = useState<any>(null)
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
+  const [editCategory, setEditCategory] = useState('')
+
+  const supabase = createClient()
 
   useEffect(() => {
     fetchData()
@@ -38,50 +44,155 @@ export default function ExpensesPage() {
       supabase.from('projects').select('id, name').order('name', { ascending: true })
     ])
     if (expRes.error) toast.error('Failed to load expenses')
-    setExpenses(expRes.data || [])
-    setProjects(projRes.data || [])
+    if (expRes.data) {
+      setExpenses(expRes.data)
+      setCached('expenses', expRes.data)
+    }
+    if (projRes.data) {
+      setProjects(projRes.data)
+      setCached('projects_short', projRes.data)
+    }
     setLoading(false)
   }
+
   const [search, setSearch] = useState('')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [expenseCategory, setExpenseCategory] = useState('')
 
   const filteredExpenses = expenses.filter(e => 
-    e.category.toLowerCase().includes(search.toLowerCase()) || 
-    e.notes.toLowerCase().includes(search.toLowerCase())
+    e.category?.toLowerCase().includes(search.toLowerCase()) || 
+    e.notes?.toLowerCase().includes(search.toLowerCase()) ||
+    e.projects?.name?.toLowerCase().includes(search.toLowerCase())
   )
 
   const handleAddExpense = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (isFounder) return
-    const formData = new FormData(e.currentTarget)
-    
-    let category = formData.get('category') as string
-    if (category === 'Other') {
-      category = formData.get('customCategory') as string
-    }
-    
-    const newExpense = {
-      category,
-      project_id: expenseType === 'project' ? formData.get('project_id') : null,
-      amount: Number(formData.get('amount')),
-      expense_date: formData.get('date') as string,
-      payment_method: formData.get('method') as string,
-      notes: formData.get('notes') as string,
-      is_recurring: formData.get('is_recurring') === 'on',
-    }
+    if (isFounder || submittingRef.current) return
+    submittingRef.current = true
+    setIsSubmitting(true)
 
-    const { data, error } = await supabase
-      .from('expenses')
-      .insert([newExpense])
-      .select('*, projects(name)')
+    try {
+      const formData = new FormData(e.currentTarget)
+      
+      let category = formData.get('category') as string
+      if (category === 'Other') {
+        category = formData.get('customCategory') as string
+      }
 
-    if (error) {
-      toast.error(error.message)
-    } else if (data) {
-      setExpenses([data[0], ...expenses])
-      setIsDialogOpen(false)
-      toast.success('Expense recorded successfully')
+      const projId = formData.get('project_id') as string
+      const project_id = (expenseType === 'project' && projId && projId !== 'none') ? projId : null
+      const chosenMethod = (formData.get('method') as string) || 'Bank Transfer'
+      
+      const newExpense: any = {
+        category,
+        project_id,
+        amount: Number(formData.get('amount')),
+        expense_date: formData.get('date') as string,
+        payment_method: chosenMethod,
+        notes: formData.get('notes') as string,
+        is_recurring: formData.get('is_recurring') === 'on',
+      }
+
+      let res = await supabase
+        .from('expenses')
+        .insert([newExpense])
+        .select('*, projects(name)')
+
+      // Fallback if check constraint requires 'Bank' instead of 'Bank Transfer'
+      if (res.error && res.error.message?.includes('payment_method_check') && chosenMethod === 'Bank Transfer') {
+        newExpense.payment_method = 'Bank'
+        res = await supabase
+          .from('expenses')
+          .insert([newExpense])
+          .select('*, projects(name)')
+      }
+
+      const { data, error } = res
+
+      if (error) {
+        toast.error(error.message)
+      } else if (data) {
+        const updated = [data[0], ...expenses]
+        setExpenses(updated)
+        setCached('expenses', updated)
+        invalidateCache('dashboard')
+        invalidateCache('projects')
+        invalidateCache('reports')
+        setIsDialogOpen(false)
+        setExpenseCategory('')
+        toast.success('Expense recorded successfully')
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to record expense')
+    } finally {
+      submittingRef.current = false
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleOpenEdit = (expense: any) => {
+    setEditingExpense(expense)
+    setEditCategory(expense.category || '')
+    setIsEditDialogOpen(true)
+  }
+
+  const handleEditExpense = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    if (isFounder || !editingExpense || isSavingEdit) return
+    setIsSavingEdit(true)
+
+    try {
+      const formData = new FormData(e.currentTarget)
+      
+      let category = formData.get('category') as string
+      if (category === 'Other') {
+        category = formData.get('customCategory') as string
+      }
+      const chosenMethod = (formData.get('method') as string) || 'Bank Transfer'
+
+      const updates: any = {
+        category,
+        amount: Number(formData.get('amount')),
+        expense_date: formData.get('date') as string,
+        payment_method: chosenMethod,
+        notes: formData.get('notes') as string,
+        is_recurring: formData.get('is_recurring') === 'on',
+      }
+
+      let res = await supabase
+        .from('expenses')
+        .update(updates)
+        .eq('id', editingExpense.id)
+        .select('*, projects(name)')
+
+      if (res.error && res.error.message?.includes('payment_method_check') && chosenMethod === 'Bank Transfer') {
+        updates.payment_method = 'Bank'
+        res = await supabase
+          .from('expenses')
+          .update(updates)
+          .eq('id', editingExpense.id)
+          .select('*, projects(name)')
+      }
+
+      const { data, error } = res
+
+      if (error) {
+        toast.error(error.message)
+      } else if (data && data.length > 0) {
+        const updated = expenses.map(e => e.id === editingExpense.id ? data[0] : e)
+        setExpenses(updated)
+        setCached('expenses', updated)
+        invalidateCache('dashboard')
+        invalidateCache('projects')
+        invalidateCache('reports')
+        setIsEditDialogOpen(false)
+        setEditingExpense(null)
+        toast.success('Expense updated successfully')
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update expense')
+    } finally {
+      setIsSavingEdit(false)
     }
   }
 
@@ -97,7 +208,12 @@ export default function ExpensesPage() {
     if (error) {
       toast.error(error.message)
     } else {
-      setExpenses(expenses.filter(e => e.id !== id))
+      const updated = expenses.filter(e => e.id !== id)
+      setExpenses(updated)
+      setCached('expenses', updated)
+      invalidateCache('dashboard')
+      invalidateCache('projects')
+      invalidateCache('reports')
       toast.success('Expense deleted successfully')
     }
   }
@@ -112,7 +228,7 @@ export default function ExpensesPage() {
         
         {isAdmin && (
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-            <DialogTrigger render={<Button variant="destructive" className="bg-destructive hover:bg-destructive/90" />}>
+            <DialogTrigger render={<Button onClick={() => setIsDialogOpen(true)} variant="destructive" className="bg-destructive hover:bg-destructive/90" />}>
               <Plus className="mr-2 h-4 w-4" /> Add Expense
             </DialogTrigger>
           <DialogContent className="sm:max-w-[425px]">
@@ -183,12 +299,12 @@ export default function ExpensesPage() {
                   </div>
                   <div className="grid gap-2">
                     <Label htmlFor="date">Date</Label>
-                    <Input id="date" name="date" type="date" required />
+                    <Input id="date" name="date" type="date" required defaultValue={new Date().toISOString().split('T')[0]} />
                   </div>
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="method">Payment Method</Label>
-                  <Select name="method" required>
+                  <Select name="method" required defaultValue="Bank Transfer">
                     <SelectTrigger>
                       <SelectValue placeholder="Select method" />
                     </SelectTrigger>
@@ -197,6 +313,7 @@ export default function ExpensesPage() {
                       <SelectItem value="UPI">UPI</SelectItem>
                       <SelectItem value="Card">Card</SelectItem>
                       <SelectItem value="Cash">Cash</SelectItem>
+                      <SelectItem value="Other">Other</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -210,26 +327,132 @@ export default function ExpensesPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button type="submit" variant="destructive" className="bg-destructive hover:bg-destructive/90">Save Expense</Button>
+                <Button 
+                  type="submit" 
+                  variant="destructive" 
+                  className="bg-destructive hover:bg-destructive/90 cursor-pointer"
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
+                    </>
+                  ) : (
+                    'Save Expense'
+                  )}
+                </Button>
               </DialogFooter>
             </form>
           </DialogContent>
         </Dialog>
         )}
+
+        {/* Edit Expense Dialog */}
+        <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+          <DialogContent className="sm:max-w-[425px]">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Pencil className="h-4 w-4" /> Edit Expense
+              </DialogTitle>
+              <DialogDescription>
+                Update the expense details below.
+              </DialogDescription>
+            </DialogHeader>
+            {editingExpense && (
+              <form onSubmit={handleEditExpense}>
+                <div className="grid gap-4 py-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="edit-category">Category</Label>
+                    <Select name="category" required defaultValue={editingExpense.category} onValueChange={(val) => val && setEditCategory(val)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select category" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Rent">Rent</SelectItem>
+                        <SelectItem value="WiFi">WiFi</SelectItem>
+                        <SelectItem value="Electricity">Electricity</SelectItem>
+                        <SelectItem value="Water">Water</SelectItem>
+                        <SelectItem value="Subscription">Subscription</SelectItem>
+                        <SelectItem value="Travel">Travel</SelectItem>
+                        <SelectItem value="Office">Office Supplies</SelectItem>
+                        <SelectItem value="Project">Project Cost</SelectItem>
+                        <SelectItem value="Miscellaneous">Miscellaneous</SelectItem>
+                        <SelectItem value="Other">Other...</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {editCategory === 'Other' && (
+                    <div className="grid gap-2">
+                      <Label htmlFor="edit-customCategory">Custom Category Name</Label>
+                      <Input id="edit-customCategory" name="customCategory" required defaultValue={editingExpense.category} />
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="edit-amount">Amount (₹)</Label>
+                      <Input id="edit-amount" name="amount" type="number" required defaultValue={editingExpense.amount} />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="edit-date">Date</Label>
+                      <Input id="edit-date" name="date" type="date" required defaultValue={editingExpense.expense_date} />
+                    </div>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="edit-method">Payment Method</Label>
+                    <Select name="method" required defaultValue={editingExpense.payment_method === 'Bank' ? 'Bank Transfer' : (editingExpense.payment_method || 'Bank Transfer')}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select method" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                        <SelectItem value="UPI">UPI</SelectItem>
+                        <SelectItem value="Card">Card</SelectItem>
+                        <SelectItem value="Cash">Cash</SelectItem>
+                        <SelectItem value="Other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="edit-notes">Notes</Label>
+                    <Textarea id="edit-notes" name="notes" defaultValue={editingExpense.notes || ''} placeholder="Reason or description" />
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <input type="checkbox" id="edit-is_recurring" name="is_recurring" defaultChecked={editingExpense.is_recurring} className="rounded border-gray-300" />
+                    <Label htmlFor="edit-is_recurring" className="font-normal text-sm">This is a recurring monthly expense</Label>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={isSavingEdit}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={isSavingEdit}>
+                    {isSavingEdit ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
+                      </>
+                    ) : (
+                      'Save Changes'
+                    )}
+                  </Button>
+                </DialogFooter>
+              </form>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
 
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+      {/* Filters and Search */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center space-x-2 flex-1 max-w-sm">
+          <Search className="w-5 h-5 text-muted-foreground" />
           <Input 
             placeholder="Search expenses..." 
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-8"
           />
         </div>
-        <Button variant="outline" size="icon">
-          <Filter className="h-4 w-4" />
+        <Button variant="outline" size="sm" className="hidden sm:flex">
+          <Filter className="mr-2 h-4 w-4" /> Filter
         </Button>
       </div>
 
@@ -274,7 +497,9 @@ export default function ExpensesPage() {
                   <TableCell className="text-muted-foreground">{expense.projects?.name || 'Office'}</TableCell>
                   <TableCell>{expense.expense_date}</TableCell>
                   <TableCell className="text-muted-foreground truncate max-w-[200px]">{expense.notes}</TableCell>
-                  <TableCell className="text-muted-foreground">{expense.payment_method}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {expense.payment_method === 'Bank' ? 'Bank Transfer' : expense.payment_method}
+                  </TableCell>
                   <TableCell className="text-right font-medium text-destructive">
                     -₹{Number(expense.amount).toLocaleString()}
                   </TableCell>
@@ -287,7 +512,9 @@ export default function ExpensesPage() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                          <DropdownMenuItem>Edit Expense</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleOpenEdit(expense)}>
+                            <Pencil className="mr-2 h-4 w-4" /> Edit Expense
+                          </DropdownMenuItem>
                           <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteExpense(expense.id)}>
                             Delete
                           </DropdownMenuItem>

@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Plus, Search, MoreHorizontal, UserCircle, CheckCircle2, Clock, Banknote, Calendar, Mail } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Plus, Search, MoreHorizontal, UserCircle, CheckCircle2, Clock, Banknote, Calendar, Mail, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -13,16 +13,19 @@ import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
 import Image from 'next/image'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth-context'
+import { getCached, setCached, hasCached, invalidateCache } from '@/lib/data-cache'
 
 export default function SalariesPage() {
   const router = useRouter()
   const { isFounder, loading: authLoading } = useAuth()
-  const [salaries, setSalaries] = useState<any[]>([])
-  const [employeesList, setEmployeesList] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
+  const [salaries, setSalaries] = useState<any[]>(() => getCached('salaries_all') || [])
+  const [employeesList, setEmployeesList] = useState<any[]>(() => getCached('salaries_employees') || [])
+  const [loading, setLoading] = useState(() => !hasCached('salaries_all'))
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const submittingRef = useRef(false)
 
   useEffect(() => {
     if (!authLoading && isFounder) {
@@ -52,28 +55,31 @@ export default function SalariesPage() {
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  const supabase = createClient()
 
   useEffect(() => {
     fetchData()
   }, [])
 
   const fetchData = async () => {
+    if (!hasCached('salaries_all')) {
+      setLoading(true)
+    }
+
     const { data: salariesData, error: salariesError } = await supabase.from('salaries').select('*').order('created_at', { ascending: false })
     if (salariesError) toast.error('Failed to load salaries')
     const loadedSalaries = salariesData || []
     setSalaries(loadedSalaries)
+    setCached('salaries_all', loadedSalaries)
 
     const { data: employeesData, error: employeesError } = await supabase.from('employees').select('*').order('name', { ascending: true })
     if (employeesError) toast.error('Failed to load employees')
     setEmployeesList(employeesData || [])
+    setCached('salaries_employees', employeesData || [])
 
     // Set default month filter dynamically to the month of the last paid/recorded salary
     if (loadedSalaries.length > 0) {
-      const latestPaid = loadedSalaries.find(s => s.payment_status === 'Paid') || loadedSalaries[0]
+      const latestPaid = loadedSalaries.find((s: any) => s.payment_status === 'Paid') || loadedSalaries[0]
       if (latestPaid && latestPaid.month_year) {
         setFilterMonth(latestPaid.month_year.slice(0, 7))
       }
@@ -179,47 +185,60 @@ export default function SalariesPage() {
 
   const handleAddSalary = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    const formData = new FormData(e.currentTarget)
-    
-    const statusInput = formData.get('status') as string
-    
-    const newSalary = {
-      employee_id: formEmployeeId || null,
-      employee_name: formEmployeeName || (formData.get('employee') as string),
-      employee_email: formData.get('employee_email') as string,
-      role: formData.get('role') as string,
-      amount: Number(formData.get('amount')),
-      month_year: formData.get('month') + '-01',
-      payment_status: 'Pending', // Always create as Pending first to allow API to process payment securely
-      payment_date: formData.get('payment_date') as string || null,
-    }
+    if (submittingRef.current) return
+    submittingRef.current = true
+    setIsSubmitting(true)
 
-    const { data, error } = await supabase
-      .from('salaries')
-      .insert([newSalary])
-      .select()
-
-    if (error) {
-      toast.error(error.message)
-    } else if (data) {
-      setIsDialogOpen(false)
+    try {
+      const formData = new FormData(e.currentTarget)
       
-      // Reset form search/selection states
-      setEmployeeSearch('')
-      setFormEmployeeId('')
-      setFormEmployeeName('')
-      setFormEmail('')
-      setFormRole('')
-      setFormAmount('10000')
+      const statusInput = formData.get('status') as string
       
-      // If user selected Paid, process the payment immediately via our API
-      if (statusInput === 'Paid') {
-        toast.success('Record created. Processing payment receipt...')
-        await markAsPaid(data[0].id)
-      } else {
-        setSalaries([data[0], ...salaries])
-        toast.success('Salary record added successfully')
+      const newSalary = {
+        employee_id: formEmployeeId || null,
+        employee_name: formEmployeeName || (formData.get('employee') as string),
+        employee_email: formData.get('employee_email') as string,
+        role: formData.get('role') as string,
+        amount: Number(formData.get('amount')),
+        month_year: formData.get('month') + '-01',
+        payment_status: 'Pending', // Always create as Pending first to allow API to process payment securely
+        payment_date: formData.get('payment_date') as string || null,
       }
+
+      const { data, error } = await supabase
+        .from('salaries')
+        .insert([newSalary])
+        .select()
+
+      if (error) {
+        toast.error(error.message)
+      } else if (data) {
+        setIsDialogOpen(false)
+        
+        // Reset form search/selection states
+        setEmployeeSearch('')
+        setFormEmployeeId('')
+        setFormEmployeeName('')
+        setFormEmail('')
+        setFormRole('')
+        setFormAmount('10000')
+        
+        // If user selected Paid, process the payment immediately via our API
+        if (statusInput === 'Paid') {
+          toast.success('Record created. Processing payment receipt...')
+          await markAsPaid(data[0].id)
+        } else {
+          const updated = [data[0], ...salaries]
+          setSalaries(updated)
+          setCached('salaries_all', updated)
+          invalidateCache('dashboard')
+          invalidateCache('reports')
+          toast.success('Salary record added successfully')
+        }
+      }
+    } finally {
+      setIsSubmitting(false)
+      submittingRef.current = false
     }
   }
 
@@ -250,11 +269,16 @@ export default function SalariesPage() {
           receipt_sent: result.emailSent
         }
         
+        let updatedList: any[]
         if (exists) {
-          return currentSalaries.map(s => s.id === id ? updatedRecord : s)
+          updatedList = currentSalaries.map(s => s.id === id ? updatedRecord : s)
         } else {
-          return [updatedRecord, ...currentSalaries]
+          updatedList = [updatedRecord, ...currentSalaries]
         }
+        setCached('salaries_all', updatedList)
+        invalidateCache('dashboard')
+        invalidateCache('reports')
+        return updatedList
       })
       
       if (result.emailSent) {
@@ -324,7 +348,7 @@ export default function SalariesPage() {
         </div>
         
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger render={<Button />}>
+          <DialogTrigger render={<Button onClick={() => setIsDialogOpen(true)} />}>
             <Plus className="mr-2 h-4 w-4" /> Add Record
           </DialogTrigger>
           <DialogContent className="sm:max-w-[425px]">
@@ -434,7 +458,15 @@ export default function SalariesPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button type="submit">Save Record</Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
+                    </>
+                  ) : (
+                    'Save Record'
+                  )}
+                </Button>
               </DialogFooter>
             </form>
           </DialogContent>

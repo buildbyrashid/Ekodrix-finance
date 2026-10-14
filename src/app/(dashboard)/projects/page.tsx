@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Plus, Search, MoreHorizontal, FileText, ArrowUpDown, ArrowUp, ArrowDown, Trash2, Loader2, AlertTriangle, Eye } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,22 +12,22 @@ import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
 import Image from 'next/image'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth-context'
+import { getCached, setCached, invalidateCache, hasCached } from '@/lib/data-cache'
 
 export default function ProjectsPage() {
   const router = useRouter()
   const { isAdmin, isFounder } = useAuth()
-  const [projects, setProjects] = useState<any[]>([])
-  const [payments, setPayments] = useState<any[]>([])
-  const [expenses, setExpenses] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
+  const [projects, setProjects] = useState<any[]>(() => getCached('projects') || [])
+  const [payments, setPayments] = useState<any[]>(() => getCached('payments_summary') || [])
+  const [expenses, setExpenses] = useState<any[]>(() => getCached('expenses_summary') || [])
+  const [loading, setLoading] = useState(() => !hasCached('projects'))
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const submittingRef = useRef(false)
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  const supabase = createClient()
 
   useEffect(() => {
     fetchData()
@@ -42,9 +42,18 @@ export default function ProjectsPage() {
 
     if (projectsRes.error) toast.error('Failed to load projects')
 
-    setProjects(projectsRes.data || [])
-    setPayments(payRes.data || [])
-    setExpenses(expRes.data || [])
+    if (projectsRes.data) {
+      setProjects(projectsRes.data)
+      setCached('projects', projectsRes.data)
+    }
+    if (payRes.data) {
+      setPayments(payRes.data)
+      setCached('payments_summary', payRes.data)
+    }
+    if (expRes.data) {
+      setExpenses(expRes.data)
+      setCached('expenses_summary', expRes.data)
+    }
     setLoading(false)
   }
   const [search, setSearch] = useState('')
@@ -82,9 +91,15 @@ export default function ProjectsPage() {
 
       if (projErr) throw projErr
 
-      setProjects(prev => prev.filter(p => p.id !== projectToDelete.id))
+      setProjects(prev => {
+        const next = prev.filter(p => p.id !== projectToDelete.id)
+        setCached('projects', next)
+        return next
+      })
       setPayments(prev => prev.filter(p => p.project_id !== projectToDelete.id))
       setExpenses(prev => prev.filter(e => e.project_id !== projectToDelete.id))
+      invalidateCache('dashboard')
+      invalidateCache('reports')
 
       toast.success(`Project "${projectToDelete.name}" and connected transactions deleted successfully`)
       setIsDeleteDialogOpen(false)
@@ -118,8 +133,8 @@ export default function ProjectsPage() {
     const projExpenses = expenses.filter(e => e.project_id === project.id)
     const received = projPayments.reduce((sum, p) => sum + Number(p.amount), 0)
     const projectExpTotal = projExpenses.reduce((sum, e) => sum + Number(e.amount), 0)
-    const pending = Number(project.total_value) - received
-    const netProfit = Number(project.total_value) - projectExpTotal
+    const pending = Math.max(0, Number(project.total_value) - received)
+    const netProfit = received - projectExpTotal
     return {
       ...project,
       received,
@@ -189,29 +204,43 @@ export default function ProjectsPage() {
 
   const handleAddProject = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (isFounder) return
-    const formData = new FormData(e.currentTarget)
+    if (isFounder || submittingRef.current) return
+    submittingRef.current = true
+    setIsSubmitting(true)
 
-    const newProject = {
-      name: formData.get('name') as string,
-      client_name: formData.get('client_name') as string,
-      project_type: (formData.get('project_type') as string) || 'Website & Software Development',
-      total_value: Number(formData.get('total_value')),
-      due_date: formData.get('due_date') as string,
-      status: 'Pending',
-    }
+    try {
+      const formData = new FormData(e.currentTarget)
 
-    const { data, error } = await supabase
-      .from('projects')
-      .insert([newProject])
-      .select('*, clients(name)')
+      const newProject = {
+        name: formData.get('name') as string,
+        client_name: formData.get('client_name') as string,
+        project_type: (formData.get('project_type') as string) || 'Website & Software Development',
+        total_value: Number(formData.get('total_value')),
+        due_date: formData.get('due_date') as string,
+        status: 'Pending',
+      }
 
-    if (error) {
-      toast.error(error.message)
-    } else if (data) {
-      setProjects([data[0], ...projects])
-      setIsDialogOpen(false)
-      toast.success('Project created successfully')
+      const { data, error } = await supabase
+        .from('projects')
+        .insert([newProject])
+        .select('*, clients(name)')
+
+      if (error) {
+        toast.error(error.message)
+      } else if (data) {
+        const updated = [data[0], ...projects]
+        setProjects(updated)
+        setCached('projects', updated)
+        invalidateCache('dashboard')
+        invalidateCache('reports')
+        setIsDialogOpen(false)
+        toast.success('Project created successfully')
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to create project')
+    } finally {
+      submittingRef.current = false
+      setIsSubmitting(false)
     }
   }
 
@@ -235,7 +264,7 @@ export default function ProjectsPage() {
 
         {isAdmin && (
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-            <DialogTrigger render={<Button />}>
+            <DialogTrigger render={<Button onClick={() => setIsDialogOpen(true)} className="cursor-pointer" />}>
               <Plus className="mr-2 h-4 w-4" /> New Project
             </DialogTrigger>
             <DialogContent className="sm:max-w-[425px]">
@@ -269,7 +298,15 @@ export default function ProjectsPage() {
                   </div>
                 </div>
                 <DialogFooter>
-                  <Button type="submit">Create Project</Button>
+                  <Button type="submit" disabled={isSubmitting} className="cursor-pointer">
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating...
+                      </>
+                    ) : (
+                      'Create Project'
+                    )}
+                  </Button>
                 </DialogFooter>
               </form>
             </DialogContent>
@@ -367,7 +404,7 @@ export default function ProjectsPage() {
                       </TableCell>
                       <TableCell className="text-right font-medium">₹{Number(project.total_value).toLocaleString()}</TableCell>
                       <TableCell className="text-right text-destructive">₹{projectExpTotal.toLocaleString()}</TableCell>
-                      <TableCell className="text-right font-bold text-primary">₹{netProfit.toLocaleString()}</TableCell>
+                      <TableCell className={`text-right font-bold ${netProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>₹{netProfit.toLocaleString()}</TableCell>
                       <TableCell className="text-right text-primary">₹{received.toLocaleString()}</TableCell>
                       <TableCell className="text-right text-destructive">₹{pending.toLocaleString()}</TableCell>
                       <TableCell>{getStatusBadge(project.status)}</TableCell>

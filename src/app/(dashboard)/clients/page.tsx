@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Plus, Search, MoreHorizontal } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Plus, Search, MoreHorizontal, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -10,25 +10,28 @@ import { Label } from '@/components/ui/label'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { toast } from 'sonner'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/auth-context'
+import { getCached, setCached, hasCached, invalidateCache } from '@/lib/data-cache'
 
-// Dummy Data
 export default function ClientsPage() {
   const { isAdmin, isFounder } = useAuth()
-  const [clients, setClients] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
+  const [clients, setClients] = useState<any[]>(() => getCached('clients_all') || [])
+  const [loading, setLoading] = useState(() => !hasCached('clients_all'))
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const submittingRef = useRef(false)
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  const supabase = createClient()
 
   useEffect(() => {
     fetchClients()
   }, [])
 
   const fetchClients = async () => {
+    if (!hasCached('clients_all')) {
+      setLoading(true)
+    }
+
     const { data, error } = await supabase
       .from('clients')
       .select('*')
@@ -39,40 +42,53 @@ export default function ClientsPage() {
       console.error(error)
     } else {
       setClients(data || [])
+      setCached('clients_all', data || [])
     }
     setLoading(false)
   }
+
   const [search, setSearch] = useState('')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
 
   const filteredClients = clients.filter(c => 
     c.name.toLowerCase().includes(search.toLowerCase()) || 
-    c.email.toLowerCase().includes(search.toLowerCase())
+    (c.email && c.email.toLowerCase().includes(search.toLowerCase()))
   )
 
   const handleAddClient = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (isFounder) return
-    const formData = new FormData(e.currentTarget)
-    
-    const newClient = {
-      name: formData.get('name') as string,
-      contact_person: formData.get('contact_person') as string,
-      email: formData.get('email') as string,
-      phone: formData.get('phone') as string,
-    }
+    if (isFounder || submittingRef.current) return
+    submittingRef.current = true
+    setIsSubmitting(true)
 
-    const { data, error } = await supabase
-      .from('clients')
-      .insert([newClient])
-      .select()
+    try {
+      const formData = new FormData(e.currentTarget)
+      
+      const newClient = {
+        name: formData.get('name') as string,
+        contact_person: formData.get('contact_person') as string,
+        email: formData.get('email') as string,
+        phone: formData.get('phone') as string,
+      }
 
-    if (error) {
-      toast.error(error.message)
-    } else if (data) {
-      setClients([data[0], ...clients])
-      setIsDialogOpen(false)
-      toast.success('Client added successfully')
+      const { data, error } = await supabase
+        .from('clients')
+        .insert([newClient])
+        .select()
+
+      if (error) {
+        toast.error(error.message)
+      } else if (data) {
+        const updated = [data[0], ...clients]
+        setClients(updated)
+        setCached('clients_all', updated)
+        invalidateCache('projects')
+        setIsDialogOpen(false)
+        toast.success('Client added successfully')
+      }
+    } finally {
+      setIsSubmitting(false)
+      submittingRef.current = false
     }
   }
 
@@ -86,7 +102,7 @@ export default function ClientsPage() {
         
         {isAdmin && (
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-            <DialogTrigger render={<Button />}>
+            <DialogTrigger render={<Button onClick={() => setIsDialogOpen(true)} />}>
               <Plus className="mr-2 h-4 w-4" /> Add Client
             </DialogTrigger>
           <DialogContent className="sm:max-w-[425px]">
@@ -116,7 +132,15 @@ export default function ClientsPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button type="submit">Save Client</Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
+                    </>
+                  ) : (
+                    'Save Client'
+                  )}
+                </Button>
               </DialogFooter>
             </form>
           </DialogContent>
@@ -149,7 +173,10 @@ export default function ClientsPage() {
             {loading ? (
               <TableRow>
                 <TableCell colSpan={5} className="h-24 text-center">
-                  Loading clients...
+                  <div className="flex items-center justify-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    <span>Loading clients...</span>
+                  </div>
                 </TableCell>
               </TableRow>
             ) : filteredClients.length === 0 ? (
@@ -185,7 +212,6 @@ export default function ClientsPage() {
                             Copy Email
                           </DropdownMenuItem>
                           <DropdownMenuItem>View Projects</DropdownMenuItem>
-                          <DropdownMenuItem className="text-destructive">Delete Client</DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     )}

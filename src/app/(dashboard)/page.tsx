@@ -4,11 +4,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Banknote, CreditCard, Receipt, Wallet, TrendingUp, TrendingDown, FolderKanban, Loader2, Eye } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useEffect, useState, useMemo } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { format, startOfWeek, startOfMonth, startOfYear, parseISO } from 'date-fns'
 import { useAuth } from '@/lib/auth-context'
+import { getCached, setCached, hasCached } from '@/lib/data-cache'
 
 type Timeframe = 'week' | 'month' | 'year' | 'all'
 
@@ -17,16 +18,13 @@ export default function DashboardPage() {
   const [timeframe, setTimeframe] = useState<Timeframe>('all')
   const { isFounder, loading: authLoading } = useAuth()
   
-  const [projects, setProjects] = useState<any[]>([])
-  const [payments, setPayments] = useState<any[]>([])
-  const [expenses, setExpenses] = useState<any[]>([])
-  const [salaries, setSalaries] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
+  const [projects, setProjects] = useState<any[]>(() => getCached('dashboard_projects') || [])
+  const [payments, setPayments] = useState<any[]>(() => getCached('dashboard_payments') || [])
+  const [expenses, setExpenses] = useState<any[]>(() => getCached('dashboard_expenses') || [])
+  const [salaries, setSalaries] = useState<any[]>(() => getCached('dashboard_salaries') || [])
+  const [loading, setLoading] = useState(() => !hasCached('dashboard_projects'))
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  const supabase = createClient()
 
   useEffect(() => {
     setMounted(true)
@@ -36,7 +34,9 @@ export default function DashboardPage() {
   }, [authLoading, isFounder])
 
   const fetchDashboardData = async () => {
-    setLoading(true)
+    if (!hasCached('dashboard_projects')) {
+      setLoading(true)
+    }
     
     const [projRes, payRes, expRes, salRes] = await Promise.all([
       supabase.from('projects').select('*'),
@@ -45,10 +45,22 @@ export default function DashboardPage() {
       supabase.from('salaries').select('*')
     ])
     
-    if (projRes.data) setProjects(projRes.data)
-    if (payRes.data) setPayments(payRes.data)
-    if (expRes.data) setExpenses(expRes.data)
-    if (salRes.data) setSalaries(salRes.data)
+    if (projRes.data) {
+      setProjects(projRes.data)
+      setCached('dashboard_projects', projRes.data)
+    }
+    if (payRes.data) {
+      setPayments(payRes.data)
+      setCached('dashboard_payments', payRes.data)
+    }
+    if (expRes.data) {
+      setExpenses(expRes.data)
+      setCached('dashboard_expenses', expRes.data)
+    }
+    if (salRes.data) {
+      setSalaries(salRes.data)
+      setCached('dashboard_salaries', salRes.data)
+    }
     
     setLoading(false)
   }

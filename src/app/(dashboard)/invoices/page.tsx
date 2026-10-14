@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Plus, Search, MoreHorizontal, FileText, ArrowUpDown, ArrowUp, ArrowDown, Trash2, Loader2, AlertTriangle, Eye, Printer, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,17 +12,20 @@ import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth-context'
+import { getCached, setCached, invalidateCache, hasCached } from '@/lib/data-cache'
 
 export default function InvoicesPage() {
   const router = useRouter()
   const { isAdmin, isFounder } = useAuth()
-  const [invoices, setInvoices] = useState<any[]>([])
-  const [projects, setProjects] = useState<any[]>([])
-  const [payments, setPayments] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
+  const [invoices, setInvoices] = useState<any[]>(() => getCached('invoices_all') || [])
+  const [projects, setProjects] = useState<any[]>(() => getCached('invoices_projects') || [])
+  const [payments, setPayments] = useState<any[]>(() => getCached('invoices_payments') || [])
+  const [loading, setLoading] = useState(() => !hasCached('invoices_all'))
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const submittingRef = useRef(false)
 
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -38,10 +41,7 @@ export default function InvoicesPage() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  const supabase = createClient()
 
   // Line Items state for Create Invoice (start with 1 blank row)
   const [createItems, setCreateItems] = useState<{ description: string; amount: number }[]>([
@@ -59,19 +59,30 @@ export default function InvoicesPage() {
   }, [])
 
   const fetchData = async () => {
-    setLoading(true)
+    if (!hasCached('invoices_all')) {
+      setLoading(true)
+    }
 
     let projData: any[] = []
     const projRes = await supabase.from('projects').select('id, name, client_name, clients(name)').order('name', { ascending: true })
-    if (projRes.data) projData = projRes.data
+    if (projRes.data) {
+      projData = projRes.data
+      setCached('invoices_projects', projData)
+    }
 
     let invData: any[] = []
     const invRes = await supabase.from('invoices').select('*, projects(name, client_name, clients(name))').order('created_at', { ascending: false })
-    if (invRes.data) invData = invRes.data
+    if (invRes.data) {
+      invData = invRes.data
+      setCached('invoices_all', invData)
+    }
 
     let payData: any[] = []
     const payRes = await supabase.from('payments').select('invoice_id, amount').not('invoice_id', 'is', null)
-    if (payRes.data) payData = payRes.data
+    if (payRes.data) {
+      payData = payRes.data
+      setCached('invoices_payments', payData)
+    }
 
     setInvoices(invData)
     setProjects(projData)
@@ -81,105 +92,132 @@ export default function InvoicesPage() {
 
   const handleCreateInvoice = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (isFounder) return
-    const formData = new FormData(e.currentTarget)
+    if (isFounder || submittingRef.current) return
+    submittingRef.current = true
+    setIsSubmitting(true)
 
-    const projId = formData.get('project_id') as string
-    const selProj = projects.find(p => p.id === projId)
-    const clientName = selProj?.client_name || selProj?.clients?.name || ''
+    try {
+      const formData = new FormData(e.currentTarget)
 
-    // Generate Invoice Number EK-YYYY-XXX — query live count so number is always sequential
-    const currentYear = new Date().getFullYear()
-    const { count: liveInvCount } = await supabase.from('invoices').select('id', { count: 'exact', head: true })
-    const invCount = 15 + (liveInvCount ?? invoices.length) + 1
-    const invoiceNumber = `EK-${currentYear}-${String(invCount).padStart(3, '0')}`
+      const projId = formData.get('project_id') as string
+      const selProj = projects.find(p => p.id === projId)
+      const clientName = selProj?.client_name || selProj?.clients?.name || ''
 
-    // Parse line items JSON string into description or store structured
-    const validItems = createItems.filter(item => item.description.trim() !== '')
-    const itemsJson = JSON.stringify(validItems)
+      // Generate Invoice Number EK-YYYY-XXX — query live count so number is always sequential
+      const currentYear = new Date().getFullYear()
+      const { count: liveInvCount } = await supabase.from('invoices').select('id', { count: 'exact', head: true })
+      const invCount = 15 + (liveInvCount ?? invoices.length) + 1
+      const invoiceNumber = `EK-${currentYear}-${String(invCount).padStart(3, '0')}`
 
-    const invoiceDateVal = formData.get('invoice_date') as string
-    const dueDateVal = formData.get('due_date') as string
+      // Parse line items JSON string into description or store structured
+      const validItems = createItems.filter(item => item.description.trim() !== '')
+      const itemsJson = JSON.stringify(validItems)
 
-    const newInvoice = {
-      project_id: projId,
-      client_name: clientName,
-      invoice_number: invoiceNumber,
-      invoice_date: invoiceDateVal,
-      due_date: dueDateVal ? dueDateVal : invoiceDateVal,
-      amount: totalCreateAmount,
-      description: itemsJson,
-      notes: formData.get('notes') as string,
-      status: 'UNPAID'
-    }
+      const invoiceDateVal = formData.get('invoice_date') as string
+      const dueDateVal = formData.get('due_date') as string
 
-    const { data, error } = await supabase
-      .from('invoices')
-      .insert([newInvoice])
-      .select('*, projects(name, client_name, clients(name))')
+      const newInvoice = {
+        project_id: projId,
+        client_name: clientName,
+        invoice_number: invoiceNumber,
+        invoice_date: invoiceDateVal,
+        due_date: dueDateVal ? dueDateVal : invoiceDateVal,
+        amount: totalCreateAmount,
+        description: itemsJson,
+        notes: formData.get('notes') as string,
+        status: 'UNPAID'
+      }
 
-    if (error) {
-      toast.error(error.message)
-    } else if (data) {
-      setInvoices([data[0], ...invoices])
-      setIsDialogOpen(false)
-      setCreateItems([{ description: '', amount: 0 }])
-      toast.success(`Invoice ${invoiceNumber} created successfully`)
+      const { data, error } = await supabase
+        .from('invoices')
+        .insert([newInvoice])
+        .select('*, projects(name, client_name, clients(name))')
+
+      if (error) {
+        toast.error(error.message)
+      } else if (data) {
+        const updated = [data[0], ...invoices]
+        setInvoices(updated)
+        setCached('invoices_all', updated)
+        invalidateCache('dashboard')
+        invalidateCache('reports')
+        setIsDialogOpen(false)
+        setCreateItems([{ description: '', amount: 0 }])
+        toast.success(`Invoice ${invoiceNumber} created successfully`)
+      }
+    } finally {
+      setIsSubmitting(false)
+      submittingRef.current = false
     }
   }
 
   const handleEditInvoice = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (isFounder || !editingInvoice) return
+    if (isFounder || !editingInvoice || isSavingEdit) return
     setIsSavingEdit(true)
-    const formData = new FormData(e.currentTarget)
 
-    const validItems = editItems.filter(item => item.description.trim() !== '')
-    const itemsJson = JSON.stringify(validItems)
+    try {
+      const formData = new FormData(e.currentTarget)
 
-    const updates = {
-      amount: totalEditAmount,
-      invoice_date: formData.get('invoice_date') as string,
-      due_date: formData.get('due_date') as string,
-      description: itemsJson,
-      notes: formData.get('notes') as string,
+      const validItems = editItems.filter(item => item.description.trim() !== '')
+      const itemsJson = JSON.stringify(validItems)
+
+      const updates = {
+        amount: totalEditAmount,
+        invoice_date: formData.get('invoice_date') as string,
+        due_date: formData.get('due_date') as string,
+        description: itemsJson,
+        notes: formData.get('notes') as string,
+      }
+
+      const { data, error } = await supabase
+        .from('invoices')
+        .update(updates)
+        .eq('id', editingInvoice.id)
+        .select('*, projects(name, client_name, clients(name))')
+
+      if (error) {
+        toast.error(error.message)
+      } else if (data && data.length > 0) {
+        const updated = invoices.map(i => i.id === editingInvoice.id ? data[0] : i)
+        setInvoices(updated)
+        setCached('invoices_all', updated)
+        invalidateCache('dashboard')
+        invalidateCache('reports')
+        setIsEditDialogOpen(false)
+        setEditingInvoice(null)
+        toast.success(`Invoice ${editingInvoice.invoice_number} updated successfully`)
+      }
+    } finally {
+      setIsSavingEdit(false)
     }
-
-    const { data, error } = await supabase
-      .from('invoices')
-      .update(updates)
-      .eq('id', editingInvoice.id)
-      .select('*, projects(name, client_name, clients(name))')
-
-    if (error) {
-      toast.error(error.message)
-    } else if (data && data.length > 0) {
-      setInvoices(invoices.map(i => i.id === editingInvoice.id ? data[0] : i))
-      setIsEditDialogOpen(false)
-      setEditingInvoice(null)
-      toast.success(`Invoice ${editingInvoice.invoice_number} updated successfully`)
-    }
-    setIsSavingEdit(false)
   }
 
   const handleDeleteInvoice = async () => {
-    if (isFounder || !deletingInvoice) return
+    if (isFounder || !deletingInvoice || isDeleting) return
     setIsDeleting(true)
 
-    const { error } = await supabase
-      .from('invoices')
-      .delete()
-      .eq('id', deletingInvoice.id)
+    try {
+      const { error } = await supabase
+        .from('invoices')
+        .delete()
+        .eq('id', deletingInvoice.id)
 
-    if (error) {
-      toast.error(error.message)
-    } else {
-      setInvoices(invoices.filter(i => i.id !== deletingInvoice.id))
-      setIsDeleteDialogOpen(false)
-      setDeletingInvoice(null)
-      toast.success(`Invoice ${deletingInvoice.invoice_number} deleted successfully`)
+      if (error) {
+        toast.error(error.message)
+      } else {
+        const updated = invoices.filter(i => i.id !== deletingInvoice.id)
+        setInvoices(updated)
+        setCached('invoices_all', updated)
+        invalidateCache('dashboard')
+        invalidateCache('reports')
+        setIsDeleteDialogOpen(false)
+        setDeletingInvoice(null)
+        toast.success(`Invoice ${deletingInvoice.invoice_number} deleted successfully`)
+      }
+    } finally {
+      setIsDeleting(false)
     }
-    setIsDeleting(false)
   }
 
   // Calculate invoice paid amount & status dynamically
@@ -235,7 +273,7 @@ export default function InvoicesPage() {
 
         {isAdmin && (
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-            <DialogTrigger render={<Button />}>
+            <DialogTrigger render={<Button onClick={() => setIsDialogOpen(true)} />}>
               <Plus className="mr-2 h-4 w-4" /> Create Invoice
             </DialogTrigger>
           <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto">
@@ -341,7 +379,15 @@ export default function InvoicesPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button type="submit">Generate Invoice (₹{totalCreateAmount.toLocaleString('en-IN')})</Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating Invoice...
+                    </>
+                  ) : (
+                    `Generate Invoice (₹${totalCreateAmount.toLocaleString('en-IN')})`
+                  )}
+                </Button>
               </DialogFooter>
             </form>
           </DialogContent>

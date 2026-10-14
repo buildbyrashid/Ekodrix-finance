@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Plus, Search, MoreHorizontal, User, Mail, Briefcase, IndianRupee } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Plus, Search, MoreHorizontal, Loader2, Mail, Briefcase } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -10,24 +10,27 @@ import { Label } from '@/components/ui/label'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { toast } from 'sonner'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth-context'
+import { getCached, setCached, hasCached, invalidateCache } from '@/lib/data-cache'
 
 export default function EmployeesPage() {
   const router = useRouter()
   const { isFounder, loading: authLoading } = useAuth()
-  const [employees, setEmployees] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
+  const [employees, setEmployees] = useState<any[]>(() => getCached('employees_all') || [])
+  const [loading, setLoading] = useState(() => !hasCached('employees_all'))
   const [search, setSearch] = useState('')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [currentEmployee, setCurrentEmployee] = useState<any>(null)
+  
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const submittingRef = useRef(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const editingRef = useRef(false)
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  const supabase = createClient()
 
   useEffect(() => {
     if (!authLoading && isFounder) {
@@ -40,7 +43,9 @@ export default function EmployeesPage() {
   }, [authLoading, isFounder, router])
 
   const fetchEmployees = async () => {
-    setLoading(true)
+    if (!hasCached('employees_all')) {
+      setLoading(true)
+    }
     const { data, error } = await supabase
       .from('employees')
       .select('*')
@@ -51,6 +56,7 @@ export default function EmployeesPage() {
       console.error(error)
     } else {
       setEmployees(data || [])
+      setCached('employees_all', data || [])
     }
     setLoading(false)
   }
@@ -63,55 +69,77 @@ export default function EmployeesPage() {
 
   const handleAddEmployee = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    const formData = new FormData(e.currentTarget)
-    
-    const newEmployee = {
-      name: formData.get('name') as string,
-      email: formData.get('email') as string,
-      role: formData.get('role') as string,
-      salary: Number(formData.get('salary')) || 0,
-    }
+    if (submittingRef.current) return
+    submittingRef.current = true
+    setIsSubmitting(true)
 
-    const { data, error } = await supabase
-      .from('employees')
-      .insert([newEmployee])
-      .select()
+    try {
+      const formData = new FormData(e.currentTarget)
+      
+      const newEmployee = {
+        name: formData.get('name') as string,
+        email: formData.get('email') as string,
+        role: formData.get('role') as string,
+        salary: Number(formData.get('salary')) || 0,
+      }
 
-    if (error) {
-      toast.error(error.message)
-    } else if (data) {
-      setEmployees([data[0], ...employees])
-      setIsDialogOpen(false)
-      toast.success('Employee added successfully')
+      const { data, error } = await supabase
+        .from('employees')
+        .insert([newEmployee])
+        .select()
+
+      if (error) {
+        toast.error(error.message)
+      } else if (data) {
+        const updated = [data[0], ...employees]
+        setEmployees(updated)
+        setCached('employees_all', updated)
+        invalidateCache('salaries_employees')
+        setIsDialogOpen(false)
+        toast.success('Employee added successfully')
+      }
+    } finally {
+      setIsSubmitting(false)
+      submittingRef.current = false
     }
   }
 
   const handleEditEmployee = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (!currentEmployee) return
+    if (!currentEmployee || editingRef.current) return
+    editingRef.current = true
+    setIsEditing(true)
 
-    const formData = new FormData(e.currentTarget)
-    
-    const updatedEmployee = {
-      name: formData.get('name') as string,
-      email: formData.get('email') as string,
-      role: formData.get('role') as string,
-      salary: Number(formData.get('salary')) || 0,
-    }
+    try {
+      const formData = new FormData(e.currentTarget)
+      
+      const updatedEmployee = {
+        name: formData.get('name') as string,
+        email: formData.get('email') as string,
+        role: formData.get('role') as string,
+        salary: Number(formData.get('salary')) || 0,
+      }
 
-    const { data, error } = await supabase
-      .from('employees')
-      .update(updatedEmployee)
-      .eq('id', currentEmployee.id)
-      .select()
+      const { data, error } = await supabase
+        .from('employees')
+        .update(updatedEmployee)
+        .eq('id', currentEmployee.id)
+        .select()
 
-    if (error) {
-      toast.error(error.message)
-    } else if (data) {
-      setEmployees(employees.map(emp => emp.id === currentEmployee.id ? data[0] : emp))
-      setIsEditDialogOpen(false)
-      setCurrentEmployee(null)
-      toast.success('Employee updated successfully')
+      if (error) {
+        toast.error(error.message)
+      } else if (data) {
+        const updated = employees.map(emp => emp.id === currentEmployee.id ? data[0] : emp)
+        setEmployees(updated)
+        setCached('employees_all', updated)
+        invalidateCache('salaries_employees')
+        setIsEditDialogOpen(false)
+        setCurrentEmployee(null)
+        toast.success('Employee updated successfully')
+      }
+    } finally {
+      setIsEditing(false)
+      editingRef.current = false
     }
   }
 
@@ -126,7 +154,10 @@ export default function EmployeesPage() {
     if (error) {
       toast.error(error.message)
     } else {
-      setEmployees(employees.filter(emp => emp.id !== id))
+      const updated = employees.filter(emp => emp.id !== id)
+      setEmployees(updated)
+      setCached('employees_all', updated)
+      invalidateCache('salaries_employees')
       toast.success('Employee deleted successfully')
     }
   }
@@ -155,7 +186,7 @@ export default function EmployeesPage() {
         </div>
         
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger render={<Button />}>
+          <DialogTrigger render={<Button onClick={() => setIsDialogOpen(true)} />}>
             <Plus className="mr-2 h-4 w-4" /> Add Employee
           </DialogTrigger>
           <DialogContent className="sm:max-w-[425px]">
@@ -185,7 +216,15 @@ export default function EmployeesPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button type="submit">Save Employee</Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
+                    </>
+                  ) : (
+                    'Save Employee'
+                  )}
+                </Button>
               </DialogFooter>
             </form>
           </DialogContent>
@@ -221,7 +260,15 @@ export default function EmployeesPage() {
                   </div>
                 </div>
                 <DialogFooter>
-                  <Button type="submit">Update Employee</Button>
+                  <Button type="submit" disabled={isEditing}>
+                    {isEditing ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Updating...
+                      </>
+                    ) : (
+                      'Update Employee'
+                    )}
+                  </Button>
                 </DialogFooter>
               </form>
             )}
@@ -254,7 +301,10 @@ export default function EmployeesPage() {
             {loading ? (
               <TableRow>
                 <TableCell colSpan={5} className="h-24 text-center">
-                  Loading employees...
+                  <div className="flex items-center justify-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    <span>Loading employees...</span>
+                  </div>
                 </TableCell>
               </TableRow>
             ) : filteredEmployees.length === 0 ? (

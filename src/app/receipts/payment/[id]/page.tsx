@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { Loader2, Printer, ArrowLeft, Check, Phone, Mail, Globe } from 'lucide-react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
@@ -16,10 +16,7 @@ export default function PaymentReceiptPrintPage() {
   const [allPayments, setAllPayments] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  const supabase = createClient()
 
   useEffect(() => {
     async function fetchReceiptData() {
@@ -197,10 +194,20 @@ export default function PaymentReceiptPrintPage() {
                   <span className="text-gray-500">Payment Date</span>
                   <span className="font-semibold text-gray-900">{formattedPaymentDate}</span>
                 </div>
+                <div className="flex justify-between py-1 border-b border-gray-100">
+                  <span className="text-gray-500">Payment Mode</span>
+                  <span className="font-semibold text-gray-900">{payment?.payment_method === 'Bank' ? 'Bank Transfer' : (payment?.payment_method || 'Bank Transfer')}</span>
+                </div>
+                {payment?.transaction_reference && (
+                  <div className="flex justify-between py-1 border-b border-gray-100">
+                    <span className="text-gray-500">Ref / UTR</span>
+                    <span className="font-mono font-medium text-gray-800">{payment.transaction_reference}</span>
+                  </div>
+                )}
                 <div className="flex justify-between py-1">
                   <span className="text-gray-500">Remarks</span>
                   <span className="font-medium text-gray-800 text-right max-w-[200px]">
-                    {payment.notes || `Payment received against project ${project.name}`}
+                    {payment?.notes || `Payment received against project ${project?.name}`}
                   </span>
                 </div>
               </div>

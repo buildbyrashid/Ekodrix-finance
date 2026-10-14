@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Plus, Search, MoreHorizontal, ArrowDownRight, Trash2, Loader2, AlertTriangle, Printer } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -13,40 +13,48 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 import Image from 'next/image'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth-context'
+import { getCached, setCached, invalidateCache, hasCached } from '@/lib/data-cache'
 
 export default function PaymentsPage() {
   const router = useRouter()
   const { isAdmin, isFounder } = useAuth()
-  const [payments, setPayments] = useState<any[]>([])
-  const [projects, setProjects] = useState<any[]>([])
-  const [invoices, setInvoices] = useState<any[]>([])
+  const [payments, setPayments] = useState<any[]>(() => getCached('payments_all') || [])
+  const [projects, setProjects] = useState<any[]>(() => getCached('payments_projects') || [])
+  const [invoices, setInvoices] = useState<any[]>(() => getCached('payments_invoices') || [])
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() => !hasCached('payments_all'))
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const submittingRef = useRef(false)
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  const supabase = createClient()
 
   useEffect(() => {
     fetchData()
   }, [])
 
   const fetchData = async () => {
-    setLoading(true)
+    if (!hasCached('payments_all')) {
+      setLoading(true)
+    }
 
     // 1. Projects
     let projData: any[] = []
     const projRes = await supabase.from('projects').select('id, name, client_name, clients(name)').order('name', { ascending: true })
-    if (projRes.data) projData = projRes.data
+    if (projRes.data) {
+      projData = projRes.data
+      setCached('payments_projects', projData)
+    }
 
     // 2. Invoices (safely)
     let invData: any[] = []
     const invRes = await supabase.from('invoices').select('id, project_id, invoice_number, amount').order('created_at', { ascending: false })
-    if (invRes.data) invData = invRes.data
+    if (invRes.data) {
+      invData = invRes.data
+      setCached('payments_invoices', invData)
+    }
 
     // 3. Payments (with fallback)
     let payData: any[] = []
@@ -58,7 +66,10 @@ export default function PaymentsPage() {
       payData = payResWithInv.data
     }
 
-    setPayments(payData)
+    if (payData) {
+      setPayments(payData)
+      setCached('payments_all', payData)
+    }
     setProjects(projData)
     setInvoices(invData)
     setLoading(false)
@@ -104,33 +115,62 @@ export default function PaymentsPage() {
 
   const handleAddPayment = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (isFounder) return
-    const formData = new FormData(e.currentTarget)
-    
-    const invoiceIdVal = formData.get('invoice_id') as string
-    const invoice_id = invoiceIdVal && invoiceIdVal !== 'none' ? invoiceIdVal : null
+    if (isFounder || submittingRef.current) return
+    submittingRef.current = true
+    setIsSubmitting(true)
 
-    const newPayment = {
-      project_id: formData.get('project') as string,
-      invoice_id: invoice_id,
-      amount: Number(formData.get('amount')),
-      payment_date: formData.get('date') as string,
-      payment_method: formData.get('method') as string,
-      transaction_reference: formData.get('transaction_reference') as string || null,
-      notes: formData.get('notes') as string || null,
-    }
+    try {
+      const formData = new FormData(e.currentTarget)
+      
+      const invoiceIdVal = formData.get('invoice_id') as string
+      const invoice_id = invoiceIdVal && invoiceIdVal !== 'none' ? invoiceIdVal : null
+      const chosenMethod = (formData.get('method') as string) || 'Bank Transfer'
+      const paymentType = (formData.get('type') as string) || 'Partial'
 
-    const { data, error } = await supabase
-      .from('payments')
-      .insert([newPayment])
-      .select('*, projects(name, client_name, clients(name)), invoices(invoice_number)')
+      const newPayment: any = {
+        project_id: formData.get('project') as string,
+        invoice_id: invoice_id,
+        amount: Number(formData.get('amount')),
+        payment_date: formData.get('date') as string,
+        payment_type: paymentType,
+        payment_method: chosenMethod,
+        transaction_reference: formData.get('transaction_reference') as string || null,
+        notes: formData.get('notes') as string || null,
+      }
 
-    if (error) {
-      toast.error(error.message)
-    } else if (data) {
-      setPayments([data[0], ...payments])
-      setIsDialogOpen(false)
-      toast.success('Payment recorded successfully')
+      let res = await supabase
+        .from('payments')
+        .insert([newPayment])
+        .select('*, projects(name, client_name, clients(name)), invoices(invoice_number)')
+
+      // If DB check constraint strictly requires 'Bank' instead of 'Bank Transfer', retry with 'Bank'
+      if (res.error && res.error.message?.includes('payment_method_check') && chosenMethod === 'Bank Transfer') {
+        newPayment.payment_method = 'Bank'
+        res = await supabase
+          .from('payments')
+          .insert([newPayment])
+          .select('*, projects(name, client_name, clients(name)), invoices(invoice_number)')
+      }
+
+      const { data, error } = res
+
+      if (error) {
+        toast.error(error.message)
+      } else if (data) {
+        const updated = [data[0], ...payments]
+        setPayments(updated)
+        setCached('payments_all', updated)
+        invalidateCache('dashboard')
+        invalidateCache('projects')
+        invalidateCache('reports')
+        setIsDialogOpen(false)
+        toast.success('Payment recorded successfully')
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to record payment')
+    } finally {
+      submittingRef.current = false
+      setIsSubmitting(false)
     }
   }
 
@@ -144,7 +184,7 @@ export default function PaymentsPage() {
         
         {isAdmin && (
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-            <DialogTrigger render={<Button />}>
+            <DialogTrigger render={<Button onClick={() => setIsDialogOpen(true)} className="cursor-pointer" />}>
               <Plus className="mr-2 h-4 w-4" /> Record Payment
             </DialogTrigger>
           <DialogContent className="sm:max-w-[425px]">
@@ -179,20 +219,35 @@ export default function PaymentsPage() {
                     <Input id="date" name="date" type="date" required defaultValue={new Date().toISOString().split('T')[0]} />
                   </div>
                 </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="method">Method</Label>
-                  <Select name="method" required defaultValue="Bank Transfer">
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select method" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
-                      <SelectItem value="UPI">UPI</SelectItem>
-                      <SelectItem value="Card">Card</SelectItem>
-                      <SelectItem value="Cash">Cash</SelectItem>
-                      <SelectItem value="Other">Other</SelectItem>
-                    </SelectContent>
-                  </Select>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="type">Payment Type</Label>
+                    <Select name="type" required defaultValue="Partial">
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Partial">Partial</SelectItem>
+                        <SelectItem value="Advance">Advance</SelectItem>
+                        <SelectItem value="Final">Final Settlement</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="method">Method</Label>
+                    <Select name="method" required defaultValue="Bank Transfer">
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select method" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                        <SelectItem value="UPI">UPI</SelectItem>
+                        <SelectItem value="Card">Card</SelectItem>
+                        <SelectItem value="Cash">Cash</SelectItem>
+                        <SelectItem value="Other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
 
                 <div className="grid gap-2">
@@ -221,7 +276,15 @@ export default function PaymentsPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button type="submit">Save Payment</Button>
+                <Button type="submit" disabled={isSubmitting} className="cursor-pointer">
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
+                    </>
+                  ) : (
+                    'Save Payment'
+                  )}
+                </Button>
               </DialogFooter>
             </form>
           </DialogContent>
@@ -290,7 +353,10 @@ export default function PaymentsPage() {
                     </TableCell>
                     <TableCell className="text-xs">
                       <div className="flex flex-col">
-                        <span className="font-medium">{payment.payment_method}</span>
+                        <span className="font-medium">{payment.payment_method === 'Bank' ? 'Bank Transfer' : payment.payment_method}</span>
+                        {payment.payment_type && (
+                          <span className="text-[10px] text-muted-foreground">{payment.payment_type}</span>
+                        )}
                         {payment.transaction_reference && (
                           <span className="font-mono text-muted-foreground text-[10px]">Ref: {payment.transaction_reference}</span>
                         )}

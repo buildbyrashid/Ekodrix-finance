@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, Plus, Banknote, Wallet, Receipt, CreditCard, FolderKanban, Loader2, IndianRupee, Trash2, AlertTriangle, FileText, Eye, Printer, Pencil, MoreHorizontal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -14,8 +14,9 @@ import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { toast } from 'sonner'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/auth-context'
+import { invalidateCache } from '@/lib/data-cache'
 
 export default function ProjectDetailsPage() {
   const { id } = useParams<{ id: string }>()
@@ -32,6 +33,8 @@ export default function ProjectDetailsPage() {
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false)
   const [isExpenseDialogOpen, setIsExpenseDialogOpen] = useState(false)
   const [expenseCategory, setExpenseCategory] = useState("Project")
+  const [isSubmittingModal, setIsSubmittingModal] = useState(false)
+  const submittingRef = useRef(false)
 
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -48,10 +51,7 @@ export default function ProjectDetailsPage() {
   const [isDeleteInvoiceDialogOpen, setIsDeleteInvoiceDialogOpen] = useState(false)
   const [isDeletingInvoice, setIsDeletingInvoice] = useState(false)
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  const supabase = createClient()
 
   useEffect(() => {
     if (id) fetchProjectDetails()
@@ -97,7 +97,7 @@ export default function ProjectDetailsPage() {
   }
 
   const handleConfirmDelete = async () => {
-    if (!project) return
+    if (isFounder || !project || isDeleting) return
     setIsDeleting(true)
     try {
       await supabase.from('payments').delete().eq('project_id', id)
@@ -107,6 +107,9 @@ export default function ProjectDetailsPage() {
 
       if (projErr) throw projErr
 
+      invalidateCache('projects')
+      invalidateCache('dashboard')
+      invalidateCache('reports')
       toast.success(`Project "${project.name}" deleted successfully`)
       router.push('/projects')
     } catch (err: any) {
@@ -117,25 +120,33 @@ export default function ProjectDetailsPage() {
 
   const handleEditProject = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    if (isFounder || isSavingEdit) return
     setIsSavingEdit(true)
-    const formData = new FormData(e.currentTarget)
-    const updates = {
-      name: formData.get('name') as string,
-      project_type: formData.get('project_type') as string,
-      client_name: formData.get('client_name') as string,
-      total_value: Number(formData.get('total_value')),
-      due_date: formData.get('due_date') as string,
-      status: formData.get('status') as string,
+    try {
+      const formData = new FormData(e.currentTarget)
+      const rawDueDate = formData.get('due_date') as string
+      const updates = {
+        name: formData.get('name') as string,
+        project_type: (formData.get('project_type') as string) || null,
+        client_name: formData.get('client_name') as string,
+        total_value: Number(formData.get('total_value')),
+        due_date: rawDueDate ? rawDueDate : null,
+        status: formData.get('status') as string,
+      }
+      const { data, error } = await supabase.from('projects').update(updates).eq('id', id).select('*, clients(name)').single()
+      if (error) {
+        toast.error(error.message)
+      } else if (data) {
+        setProject(data)
+        invalidateCache('projects')
+        invalidateCache('dashboard')
+        invalidateCache('reports')
+        setIsEditDialogOpen(false)
+        toast.success('Project updated successfully')
+      }
+    } finally {
+      setIsSavingEdit(false)
     }
-    const { data, error } = await supabase.from('projects').update(updates).eq('id', id).select('*, clients(name)').single()
-    if (error) {
-      toast.error(error.message)
-    } else if (data) {
-      setProject(data)
-      setIsEditDialogOpen(false)
-      toast.success('Project updated successfully')
-    }
-    setIsSavingEdit(false)
   }
 
   const getStatusBadge = (status: string) => {
@@ -168,154 +179,231 @@ export default function ProjectDetailsPage() {
 
   const handleAddInvoice = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    const formData = new FormData(e.currentTarget)
+    if (isFounder || submittingRef.current) return
+    submittingRef.current = true
+    setIsSubmittingModal(true)
 
-    const clientName = project.client_name || project.clients?.name || ''
-    const currentYear = new Date().getFullYear()
-    const invCount = 14 + invoices.length + 1
-    const invoiceNumber = `EK-${currentYear}-${String(invCount).padStart(3, '0')}`
+    try {
+      const formData = new FormData(e.currentTarget)
 
-    const validItems = createInvoiceItems.filter(item => item.description.trim() !== '')
-    const itemsJson = JSON.stringify(validItems)
+      const clientName = project.client_name || project.clients?.name || ''
+      const currentYear = new Date().getFullYear()
+      const invCount = 14 + invoices.length + 1
+      const invoiceNumber = `EK-${currentYear}-${String(invCount).padStart(3, '0')}`
 
-    const invoiceDateVal = formData.get('invoice_date') as string
-    const dueDateVal = formData.get('due_date') as string
+      const validItems = createInvoiceItems.filter(item => item.description.trim() !== '')
+      const itemsJson = JSON.stringify(validItems)
 
-    const newInvoice = {
-      project_id: id,
-      client_name: clientName,
-      invoice_number: invoiceNumber,
-      invoice_date: invoiceDateVal,
-      due_date: dueDateVal ? dueDateVal : invoiceDateVal,
-      amount: totalCreateInvoiceAmount,
-      description: itemsJson,
-      notes: formData.get('notes') as string,
-      status: 'UNPAID'
-    }
+      const invoiceDateVal = formData.get('invoice_date') as string
+      const dueDateVal = formData.get('due_date') as string
 
-    const { data, error } = await supabase.from('invoices').insert([newInvoice]).select()
+      const newInvoice = {
+        project_id: id,
+        client_name: clientName,
+        invoice_number: invoiceNumber,
+        invoice_date: invoiceDateVal,
+        due_date: dueDateVal ? dueDateVal : invoiceDateVal,
+        amount: totalCreateInvoiceAmount,
+        description: itemsJson,
+        notes: formData.get('notes') as string,
+        status: 'UNPAID'
+      }
 
-    if (error) {
-      toast.error(error.message)
-    } else if (data) {
-      setInvoices([data[0], ...invoices])
-      setIsInvoiceDialogOpen(false)
-      setCreateInvoiceItems([{ description: '', amount: 0 }])
-      toast.success(`Invoice ${invoiceNumber} created successfully`)
+      const { data, error } = await supabase.from('invoices').insert([newInvoice]).select()
+
+      if (error) {
+        toast.error(error.message)
+      } else if (data) {
+        setInvoices([data[0], ...invoices])
+        invalidateCache('invoices')
+        invalidateCache('dashboard')
+        invalidateCache('reports')
+        setIsInvoiceDialogOpen(false)
+        setCreateInvoiceItems([{ description: '', amount: 0 }])
+        toast.success(`Invoice ${invoiceNumber} created successfully`)
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to create invoice')
+    } finally {
+      submittingRef.current = false
+      setIsSubmittingModal(false)
     }
   }
 
   const handleEditInvoice = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (!editingInvoice) return
+    if (!editingInvoice || submittingRef.current) return
+    submittingRef.current = true
     setIsSavingEditInvoice(true)
-    const formData = new FormData(e.currentTarget)
 
-    const validItems = editInvoiceItems.filter(item => item.description.trim() !== '')
-    const itemsJson = JSON.stringify(validItems)
+    try {
+      const formData = new FormData(e.currentTarget)
 
-    const updates = {
-      amount: totalEditInvoiceAmount,
-      invoice_date: formData.get('invoice_date') as string,
-      due_date: formData.get('due_date') as string,
-      description: itemsJson,
-      notes: formData.get('notes') as string,
+      const validItems = editInvoiceItems.filter(item => item.description.trim() !== '')
+      const itemsJson = JSON.stringify(validItems)
+
+      const updates = {
+        amount: totalEditInvoiceAmount,
+        invoice_date: formData.get('invoice_date') as string,
+        due_date: formData.get('due_date') as string,
+        description: itemsJson,
+        notes: formData.get('notes') as string,
+      }
+
+      const { data, error } = await supabase
+        .from('invoices')
+        .update(updates)
+        .eq('id', editingInvoice.id)
+        .select()
+
+      if (error) {
+        toast.error(error.message)
+      } else if (data && data.length > 0) {
+        setInvoices(invoices.map(i => i.id === editingInvoice.id ? data[0] : i))
+        invalidateCache('invoices')
+        setIsEditInvoiceDialogOpen(false)
+        setEditingInvoice(null)
+        toast.success(`Invoice ${editingInvoice.invoice_number} updated successfully`)
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update invoice')
+    } finally {
+      submittingRef.current = false
+      setIsSavingEditInvoice(false)
     }
-
-    const { data, error } = await supabase
-      .from('invoices')
-      .update(updates)
-      .eq('id', editingInvoice.id)
-      .select()
-
-    if (error) {
-      toast.error(error.message)
-    } else if (data && data.length > 0) {
-      setInvoices(invoices.map(i => i.id === editingInvoice.id ? data[0] : i))
-      setIsEditInvoiceDialogOpen(false)
-      setEditingInvoice(null)
-      toast.success(`Invoice ${editingInvoice.invoice_number} updated successfully`)
-    }
-    setIsSavingEditInvoice(false)
   }
 
   const handleDeleteInvoice = async () => {
-    if (!deletingInvoice) return
+    if (!deletingInvoice || isDeletingInvoice) return
     setIsDeletingInvoice(true)
 
-    const { error } = await supabase
-      .from('invoices')
-      .delete()
-      .eq('id', deletingInvoice.id)
+    try {
+      const { error } = await supabase
+        .from('invoices')
+        .delete()
+        .eq('id', deletingInvoice.id)
 
-    if (error) {
-      toast.error(error.message)
-    } else {
-      setInvoices(invoices.filter(i => i.id !== deletingInvoice.id))
-      setIsDeleteInvoiceDialogOpen(false)
-      setDeletingInvoice(null)
-      toast.success(`Invoice ${deletingInvoice.invoice_number} deleted successfully`)
+      if (error) {
+        toast.error(error.message)
+      } else {
+        setInvoices(invoices.filter(i => i.id !== deletingInvoice.id))
+        invalidateCache('invoices')
+        setIsDeleteInvoiceDialogOpen(false)
+        setDeletingInvoice(null)
+        toast.success(`Invoice ${deletingInvoice.invoice_number} deleted successfully`)
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete invoice')
+    } finally {
+      setIsDeletingInvoice(false)
     }
-    setIsDeletingInvoice(false)
   }
 
   const handleAddPayment = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    const formData = new FormData(e.currentTarget)
-    
-    const invoiceIdVal = formData.get('invoice_id') as string
-    const invoice_id = invoiceIdVal && invoiceIdVal !== 'none' ? invoiceIdVal : null
+    if (isFounder || submittingRef.current) return
+    submittingRef.current = true
+    setIsSubmittingModal(true)
 
-    const newPayment = {
-      project_id: id,
-      invoice_id: invoice_id,
-      amount: Number(formData.get('amount')),
-      payment_date: formData.get('date') as string,
-      payment_type: formData.get('type') as string || 'Partial',
-      payment_method: formData.get('method') as string,
-      transaction_reference: formData.get('transaction_reference') as string || null,
-      notes: formData.get('notes') as string || null,
-    }
+    try {
+      const formData = new FormData(e.currentTarget)
+      
+      const invoiceIdVal = formData.get('invoice_id') as string
+      const invoice_id = invoiceIdVal && invoiceIdVal !== 'none' ? invoiceIdVal : null
+      const chosenMethod = (formData.get('method') as string) || 'Bank Transfer'
+      const paymentType = (formData.get('type') as string) || 'Partial'
 
-    const { data, error } = await supabase.from('payments').insert([newPayment]).select('*, invoices(invoice_number)')
+      const newPayment: any = {
+        project_id: id,
+        invoice_id: invoice_id,
+        amount: Number(formData.get('amount')),
+        payment_date: formData.get('date') as string,
+        payment_type: paymentType,
+        payment_method: chosenMethod,
+        transaction_reference: formData.get('transaction_reference') as string || null,
+        notes: formData.get('notes') as string || null,
+      }
 
-    if (error) {
-      toast.error(error.message)
-    } else if (data) {
-      setPayments([data[0], ...payments])
-      setIsPaymentDialogOpen(false)
-      toast.success('Payment recorded successfully')
-      fetchProjectDetails() // Refresh to update project and invoice calculations
+      let res = await supabase.from('payments').insert([newPayment]).select('*, invoices(invoice_number)')
+
+      // Fallback if check constraint requires 'Bank' instead of 'Bank Transfer'
+      if (res.error && res.error.message?.includes('payment_method_check') && chosenMethod === 'Bank Transfer') {
+        newPayment.payment_method = 'Bank'
+        res = await supabase.from('payments').insert([newPayment]).select('*, invoices(invoice_number)')
+      }
+
+      const { data, error } = res
+
+      if (error) {
+        toast.error(error.message)
+      } else if (data) {
+        setPayments([data[0], ...payments])
+        invalidateCache('payments_all')
+        invalidateCache('dashboard')
+        invalidateCache('projects')
+        invalidateCache('reports')
+        setIsPaymentDialogOpen(false)
+        toast.success('Payment recorded successfully')
+        fetchProjectDetails() // Refresh to update project and invoice calculations
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to record payment')
+    } finally {
+      submittingRef.current = false
+      setIsSubmittingModal(false)
     }
   }
 
   const handleAddExpense = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    const formData = new FormData(e.currentTarget)
-    
-    let category = formData.get('category') as string
-    if (category === 'Other') {
-      category = formData.get('customCategory') as string
-    }
-    
-    const newExpense = {
-      project_id: id,
-      category,
-      amount: Number(formData.get('amount')),
-      expense_date: formData.get('date') as string,
-      payment_method: formData.get('method') as string,
-      notes: formData.get('notes') as string,
-      is_recurring: false,
-    }
+    if (isFounder || submittingRef.current) return
+    submittingRef.current = true
+    setIsSubmittingModal(true)
 
-    const { data, error } = await supabase.from('expenses').insert([newExpense]).select()
+    try {
+      const formData = new FormData(e.currentTarget)
+      
+      let category = formData.get('category') as string
+      if (category === 'Other') {
+        category = formData.get('customCategory') as string
+      }
+      const chosenMethod = (formData.get('method') as string) || 'Bank Transfer'
+      
+      const newExpense: any = {
+        project_id: id,
+        category,
+        amount: Number(formData.get('amount')),
+        expense_date: formData.get('date') as string,
+        payment_method: chosenMethod,
+        notes: formData.get('notes') as string,
+        is_recurring: false,
+      }
 
-    if (error) {
-      toast.error(error.message)
-    } else if (data) {
-      setExpenses([data[0], ...expenses])
-      setIsExpenseDialogOpen(false)
-      toast.success('Expense recorded successfully')
+      let res = await supabase.from('expenses').insert([newExpense]).select()
+
+      if (res.error && res.error.message?.includes('payment_method_check') && chosenMethod === 'Bank Transfer') {
+        newExpense.payment_method = 'Bank'
+        res = await supabase.from('expenses').insert([newExpense]).select()
+      }
+
+      const { data, error } = res
+
+      if (error) {
+        toast.error(error.message)
+      } else if (data) {
+        setExpenses([data[0], ...expenses])
+        invalidateCache('expenses')
+        invalidateCache('dashboard')
+        invalidateCache('projects')
+        invalidateCache('reports')
+        setIsExpenseDialogOpen(false)
+        toast.success('Expense recorded successfully')
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to record expense')
+    } finally {
+      submittingRef.current = false
+      setIsSubmittingModal(false)
     }
   }
 
@@ -451,7 +539,7 @@ export default function ProjectDetailsPage() {
           </div>
           {isAdmin && (
             <Dialog open={isInvoiceDialogOpen} onOpenChange={setIsInvoiceDialogOpen}>
-              <DialogTrigger render={<Button size="sm" variant="outline" className="cursor-pointer" />}>
+              <DialogTrigger render={<Button onClick={() => setIsInvoiceDialogOpen(true)} size="sm" variant="outline" className="cursor-pointer" />}>
                 <Plus className="mr-2 h-4 w-4" /> Create Invoice
               </DialogTrigger>
             <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto">
@@ -543,7 +631,15 @@ export default function ProjectDetailsPage() {
                   </div>
                 </div>
                 <DialogFooter>
-                  <Button type="submit">Generate Invoice (₹{totalCreateInvoiceAmount.toLocaleString('en-IN')})</Button>
+                  <Button type="submit" disabled={isSubmittingModal} className="cursor-pointer">
+                    {isSubmittingModal ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...
+                      </>
+                    ) : (
+                      `Generate Invoice (₹${totalCreateInvoiceAmount.toLocaleString('en-IN')})`
+                    )}
+                  </Button>
                 </DialogFooter>
               </form>
             </DialogContent>
@@ -638,7 +734,7 @@ export default function ProjectDetailsPage() {
             <CardTitle className="text-lg">Payments Ledger</CardTitle>
             {isAdmin && (
               <Dialog open={isPaymentDialogOpen} onOpenChange={setIsPaymentDialogOpen}>
-                <DialogTrigger render={<Button size="sm" variant="outline" className="cursor-pointer" />}>
+                <DialogTrigger render={<Button onClick={() => setIsPaymentDialogOpen(true)} size="sm" variant="outline" className="cursor-pointer" />}>
                   <Plus className="mr-2 h-4 w-4" /> Add Payment
                 </DialogTrigger>
                 <DialogContent className="sm:max-w-[425px]">
@@ -659,18 +755,31 @@ export default function ProjectDetailsPage() {
                         </div>
                       </div>
 
-                      <div className="grid gap-2">
-                        <Label htmlFor="method">Payment Method</Label>
-                        <Select name="method" required defaultValue="Bank Transfer">
-                          <SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
-                            <SelectItem value="UPI">UPI</SelectItem>
-                            <SelectItem value="Card">Card</SelectItem>
-                            <SelectItem value="Cash">Cash</SelectItem>
-                            <SelectItem value="Other">Other</SelectItem>
-                          </SelectContent>
-                        </Select>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="grid gap-2">
+                          <Label htmlFor="type">Payment Type</Label>
+                          <Select name="type" required defaultValue="Partial">
+                            <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="Partial">Partial</SelectItem>
+                              <SelectItem value="Advance">Advance</SelectItem>
+                              <SelectItem value="Final">Final Settlement</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="grid gap-2">
+                          <Label htmlFor="method">Payment Method</Label>
+                          <Select name="method" required defaultValue="Bank Transfer">
+                            <SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                              <SelectItem value="UPI">UPI</SelectItem>
+                              <SelectItem value="Card">Card</SelectItem>
+                              <SelectItem value="Cash">Cash</SelectItem>
+                              <SelectItem value="Other">Other</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
                       </div>
 
                       <div className="grid gap-2">
@@ -699,7 +808,15 @@ export default function ProjectDetailsPage() {
                       </div>
                     </div>
                     <DialogFooter>
-                      <Button type="submit">Save Payment</Button>
+                      <Button type="submit" disabled={isSubmittingModal} className="cursor-pointer">
+                        {isSubmittingModal ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
+                          </>
+                        ) : (
+                          'Save Payment'
+                        )}
+                      </Button>
                     </DialogFooter>
                   </form>
                 </DialogContent>
@@ -728,7 +845,7 @@ export default function ProjectDetailsPage() {
                       <TableCell className="font-medium text-xs whitespace-nowrap">{payment.payment_date}</TableCell>
                       <TableCell>
                         <div className="flex flex-col text-xs">
-                          <span className="font-medium text-foreground">{payment.payment_method}</span>
+                          <span className="font-medium text-foreground">{payment.payment_method === 'Bank' ? 'Bank Transfer' : payment.payment_method}</span>
                           <span className="text-muted-foreground">
                             {payment.invoices?.invoice_number ? `Inv: ${payment.invoices.invoice_number}` : 'No Invoice'}
                           </span>
@@ -757,7 +874,7 @@ export default function ProjectDetailsPage() {
             <CardTitle className="text-lg">Expenses Ledger</CardTitle>
             {isAdmin && (
               <Dialog open={isExpenseDialogOpen} onOpenChange={setIsExpenseDialogOpen}>
-                <DialogTrigger render={<Button size="sm" variant="outline" className="text-destructive hover:bg-destructive/10 hover:text-destructive cursor-pointer" />}>
+                <DialogTrigger render={<Button onClick={() => setIsExpenseDialogOpen(true)} size="sm" variant="outline" className="text-destructive hover:bg-destructive/10 hover:text-destructive cursor-pointer" />}>
                   <Plus className="mr-2 h-4 w-4" /> Add Expense
                 </DialogTrigger>
               <DialogContent className="sm:max-w-[425px]">
@@ -797,7 +914,15 @@ export default function ProjectDetailsPage() {
                     </div>
                   </div>
                   <DialogFooter>
-                    <Button type="submit">Record Expense</Button>
+                    <Button type="submit" disabled={isSubmittingModal} className="cursor-pointer">
+                      {isSubmittingModal ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Recording...
+                        </>
+                      ) : (
+                        'Record Expense'
+                      )}
+                    </Button>
                   </DialogFooter>
                 </form>
               </DialogContent>
@@ -825,7 +950,7 @@ export default function ProjectDetailsPage() {
                       <TableCell className="font-medium text-xs whitespace-nowrap">{expense.expense_date}</TableCell>
                       <TableCell>
                         <div className="flex flex-col text-xs">
-                          <span className="font-medium text-foreground">{expense.description}</span>
+                          <span className="font-medium text-foreground">{expense.notes || expense.description || 'No notes'}</span>
                           <span className="text-muted-foreground">{expense.category}</span>
                         </div>
                       </TableCell>

@@ -1,7 +1,7 @@
 'use client'
 
 import React, { createContext, useContext, useEffect, useState } from 'react'
-import { createBrowserClient } from '@supabase/ssr'
+import { createClient } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
 
 interface UserProfile {
@@ -31,17 +31,31 @@ const AuthContext = createContext<AuthContextType>({
   refreshProfile: async () => {},
 })
 
+const profileCache = new Map<string, UserProfile>()
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
-  const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [profile, setProfile] = useState<UserProfile | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = sessionStorage.getItem('ekodrix_profile')
+        if (cached) return JSON.parse(cached)
+      } catch {}
+    }
+    return null
+  })
   const [loading, setLoading] = useState(true)
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  const supabase = createClient()
 
   const fetchProfile = async (currentUser: User) => {
+    // 1. Check in-memory cache
+    if (profileCache.has(currentUser.id)) {
+      const cached = profileCache.get(currentUser.id)!
+      setProfile(cached)
+      return
+    }
+
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -50,25 +64,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .single()
 
       if (!error && data) {
-        setProfile(data as UserProfile)
+        const userProf = data as UserProfile
+        profileCache.set(currentUser.id, userProf)
+        setProfile(userProf)
+        try { sessionStorage.setItem('ekodrix_profile', JSON.stringify(userProf)) } catch {}
       } else {
-        // Fallback by email if profile lookup fails
         const role = currentUser.email === 'admin@ekodrix.com' ? 'admin' : 'founder'
-        setProfile({
+        const fallback: UserProfile = {
           id: currentUser.id,
           email: currentUser.email || '',
           full_name: currentUser.user_metadata?.full_name || null,
           role,
-        })
+        }
+        profileCache.set(currentUser.id, fallback)
+        setProfile(fallback)
+        try { sessionStorage.setItem('ekodrix_profile', JSON.stringify(fallback)) } catch {}
       }
     } catch {
       const role = currentUser.email === 'admin@ekodrix.com' ? 'admin' : 'founder'
-      setProfile({
+      const fallback: UserProfile = {
         id: currentUser.id,
         email: currentUser.email || '',
         full_name: null,
         role,
-      })
+      }
+      setProfile(fallback)
     }
   }
 
@@ -76,43 +96,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data: { user: currentUser } } = await supabase.auth.getUser()
     if (currentUser) {
       setUser(currentUser)
+      if (currentUser.id) profileCache.delete(currentUser.id)
       await fetchProfile(currentUser)
     } else {
       setUser(null)
       setProfile(null)
+      try { sessionStorage.removeItem('ekodrix_profile') } catch {}
     }
   }
 
   useEffect(() => {
-    const init = async () => {
-      setLoading(true)
-      const { data: { user: currentUser } } = await supabase.auth.getUser()
-      if (currentUser) {
-        setUser(currentUser)
-        await fetchProfile(currentUser)
-      } else {
-        setUser(null)
-        setProfile(null)
-      }
-      setLoading(false)
-    }
-
-    init()
+    let isMounted = true
 
     const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      async (event: any, session: any) => {
+        if (!isMounted) return
         if (session?.user) {
           setUser(session.user)
           await fetchProfile(session.user)
         } else {
           setUser(null)
           setProfile(null)
+          try { sessionStorage.removeItem('ekodrix_profile') } catch {}
         }
-        setLoading(false)
+        if (isMounted) setLoading(false)
       }
     )
 
     return () => {
+      isMounted = false
       authListener.subscription.unsubscribe()
     }
   }, [])
